@@ -112,7 +112,7 @@
 # # import matplotlib.pyplot as plt
 # # import numpy as np
 # # from packages.BaselineCorrection import mass_range
-# # from packages.BaselineCorrection import baseline_new  # Use Danial's new class
+# # from packages.BaselineCorrection import baseline_new
 
 # # # ... (rest of your imports and session_state variables)
 

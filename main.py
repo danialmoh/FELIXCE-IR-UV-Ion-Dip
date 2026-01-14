@@ -22,7 +22,7 @@ with st.sidebar:
     
     st.markdown(
         """
-        # 🧪 IR/UV Ion-Dip Data Analysis Pipeline
+        # IR/UV Ion-Dip Data Analysis Pipeline
         
         A comprehensive Streamlit application for processing and analyzing FELIX IR/UV ion-dip spectroscopy data.
         
@@ -70,9 +70,9 @@ with st.sidebar:
             st.switch_page(".streamlit/3.01_LaserNormalization.py")
         if st.button("🔦 3.02 Laser Normalization-P2 (Not working)", use_container_width=True, key="btn_laser2"):
             st.switch_page(".streamlit/3.02_LaserNormalizationpart2.py")
-        if st.button("🗄️ 3.1 Data analysis with Databases", use_container_width=True, key="btn_db"):
+        if st.button("🗄️ 3.1 Data analysis with NASA PAH Database", use_container_width=True, key="btn_db"):
             st.switch_page(".streamlit/3.1_Database.py")
-        if st.button("🗄️ 3.11 Data analysis with Database NIST", use_container_width=True, key="btn_nist"):
+        if st.button("🗄️ 3.11 Data analysis with NIST Database", use_container_width=True, key="btn_nist"):
             st.switch_page(".streamlit/3.11_DatabaseNIST.py")
     
     # Section 4: Miscellaneous
@@ -83,7 +83,7 @@ with st.sidebar:
         if st.button("📦 4.1 Mega sum", use_container_width=True, key="btn_mega"):
             st.switch_page(".streamlit/4.1_MegaSum.py")
         if st.button("🎯 4.2 Peak Detection", use_container_width=True, key="btn_peak"):
-            st.switch_page(".streamlit/4.2_PeakDetection.py")
+            st.switch_page(".streamlit/4.2_PeakDetection_NEW.py")
         if st.button("📋 4.3 Mass Reference", use_container_width=True, key="btn_mass"):
             st.switch_page(".streamlit/4.3_reference_spectrum.py")
     

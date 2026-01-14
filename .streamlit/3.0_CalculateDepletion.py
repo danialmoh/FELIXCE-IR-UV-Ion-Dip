@@ -1525,25 +1525,42 @@ if run_button:
         if save_output:
             fig_ln_static.savefig(f"{file_directory}/output/ln_depletion_{complex}_{int(data[-1,0])}-{int(data[0,0])}.png", dpi=300)
     
-    # # ---------- Tab 4: PAH Comparison ----------
-    # with tab4:
-    #     st.markdown("#### PAH Comparison: Experimental vs. Theoretical IR Spectrum")
-    #     with st.form("theory_form"):
-    #         xml_path = st.text_input(
-    #             "Enter path to PAH XML file",
-    #             value=""
-    #         )
-    #         uid_input = st.text_input("Enter PAH UID (e.g., 18 for coronene)", value="495")
-    #         conv_type = st.selectbox("Convolution Type", options=["Gaussian", "Lorentzian"], index=0)
-    #         fwhm = st.number_input("FWHM for convolution (cm⁻¹)", value=15.0)
-    #         submitted = st.form_submit_button("Load Theoretical Spectrum")
-    #         # st.write("Theoretical data preview:", theory_df.head())
+    # ---------- Tab 4: PAH Comparison ----------
+    with tab4:
+        st.markdown("#### PAH Comparison: Experimental vs. Theoretical IR Spectrum")
+        with st.form("theory_form"):
+            xml_path = st.text_input(
+                "Enter path to PAH XML file",
+                value=""
+            )
+            uid_input = st.text_input("Enter PAH UID (e.g., 18 for coronene)", value="495")
+            conv_type = st.selectbox("Convolution Type", options=["Gaussian", "Lorentzian"], index=0)
+            fwhm = st.number_input("FWHM for convolution (cm⁻¹)", value=15.0)
+            submitted = st.form_submit_button("Load Theoretical Spectrum")
+            # st.write("Theoretical data preview:", theory_df.head())
 
-
-    #     if submitted:
-    #         try:
+        if submitted:
+            try:
                 
-    #             from amespahdbpythonsuite.amespahdb import AmesPAHdb
+                from amespahdbpythonsuite.amespahdb import AmesPAHdb
+                # Create the database instance with desired settings
+                pahdb = AmesPAHdb(filename=xml_path, check=False, cache=True)
+                uid = int(uid_input)
+                # Retrieve the transitions for the given UID
+                transitions = pahdb.gettransitionsbyuid([uid])
+                # Convolve the stick spectrum using the chosen line profile
+                # Plot the emission 'stick' spectrum.
+                transitions.plot(show=True)
+                spectrum = transitions.convolve(fwhm=fwhm, gaussian=(conv_type == "Gaussian"), multiprocessing=False)
+                # Extract frequency and intensity data from the convolved spectrum
+                freq, conv_intensity = spectrum.get()  # returns arrays
+                norm_conv_intensity = conv_intensity / np.max(conv_intensity)
+                theory_df = pd.DataFrame({"wavenumber": freq, "norm_intensity": norm_conv_intensity})
+                st.subheader("Theoretical Spectrum")
+                st.dataframe(theory_df.head())
+            except Exception as e:
+                st.error(f"Error loading theoretical spectrum: {e}")
+                theory_df = None
     #             # Create the database instance with desired settings
     #             pahdb = AmesPAHdb(filename=xml_path, check=False, cache=True)
     #             uid = int(uid_input)

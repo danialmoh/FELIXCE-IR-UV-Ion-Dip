@@ -129,9 +129,14 @@ class ProcessData_FELIX_HDF5:
             print(column_label[i], self.data[i].wavenumbers)
         pass
 
-    def get_wavenumbers(self):
+    def get_wavenumbers(self, min_count=3):
         '''
         This function gets all unique wavenumbers and presents it in an html file
+        
+        Parameters:
+        -----------
+        min_count : int, optional (default=3)
+            Minimum count threshold. Only wavenumbers appearing more than this value will be included.
         '''
         all_wavenumbers = []
         # wavenumber_counts=[]
@@ -147,7 +152,7 @@ class ProcessData_FELIX_HDF5:
             "Counts": wavenumber_counts
         })
 
-        unique_wavenumbers_df = unique_wavenumbers_df[unique_wavenumbers_df["Counts"]>3].reset_index(drop=True)
+        unique_wavenumbers_df = unique_wavenumbers_df[unique_wavenumbers_df["Counts"]>min_count].reset_index(drop=True)
         unique_wavenumbers = unique_wavenumbers_df.iloc[:,0].tolist()
         
         

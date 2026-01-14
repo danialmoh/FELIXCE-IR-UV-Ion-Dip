@@ -64,7 +64,6 @@
 
 
 
-#kevins code:
 import streamlit as st
 import numpy as np
 import pandas as pd
@@ -109,8 +108,15 @@ if st.button("**:blue[#1]** ➕ Create a sum of all mass spectra + baseline corr
     signal_withIR = MegaTable.iloc[:, 1: :2].sum(axis=1)
 
     # baseline correction
-    baseline_withoutIR = np.mean(signal_withoutIR[baseline_range_indices])
-    baseline_withIR = np.mean(signal_withIR[baseline_range_indices])
+    # Check if baseline_range_indices exists and is valid
+    if baseline_range_indices is None:
+        st.error("baseline_range_indices not found in session state. Please run baseline correction (section 2.0) first.")
+        st.stop()
+    
+    # Ensure baseline_range_indices is integer type for .iloc indexing
+    baseline_indices = np.asarray(baseline_range_indices, dtype=int)
+    baseline_withoutIR = np.mean(signal_withoutIR.iloc[baseline_indices])
+    baseline_withIR = np.mean(signal_withIR.iloc[baseline_indices])
 
 
     new_table = pd.DataFrame({

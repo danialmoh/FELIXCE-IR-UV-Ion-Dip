@@ -134,7 +134,7 @@ st.markdown("##### Load Theoretical Spectrum from AmesPAHdb")
 with st.form("theory_form"):
     xml_path = st.text_input(
         "Enter path to PAH XML file",
-        value="/Users/danialmoh/Documents/Thesis/pahdb-complete-theoretical-v4.00-alpha.xml"  # Update with your XML file path
+        value=""
     )
     uid_input = st.text_input("Enter PAH UID (e.g., 18 for coronene)", value="495")
     conv_type = st.selectbox("Convolution Type", options=["Gaussian", "Lorentzian"], index=0)

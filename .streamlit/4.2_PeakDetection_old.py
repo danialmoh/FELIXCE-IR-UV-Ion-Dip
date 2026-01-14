@@ -185,6 +185,8 @@ if st.button("Run Peak Detection"):
 st.markdown("## Candidate Formula Matching Options")
 
 # Let the user choose candidate formula types for CH-only and CHBr
+NAPH_CH_OPTION = "Alkylated naphthalene core (C10H8 base + alkyl chains)"
+
 candidate_options_CH = st.multiselect(
     "Choose candidate formula types for CH-only:",
     options=[
@@ -192,13 +194,17 @@ candidate_options_CH = st.multiselect(
         "Alkene (CnH2n)",
         "Alkyne (CnH2n-2)",
         "Cyclic (CnH2n)",
-        "Highly Unsaturated (PAH: CnH2n+2-2u)"
+        "Highly Unsaturated (PAH: CnH2n+2-2u)",
+        NAPH_CH_OPTION,
     ],
-    default=["Highly Unsaturated (PAH: CnH2n+2-2u)", "Alkane (CnH2n+2)",
+    default=[
+        "Highly Unsaturated (PAH: CnH2n+2-2u)",
+        "Alkane (CnH2n+2)",
         "Alkene (CnH2n)",
         "Alkyne (CnH2n-2)",
         "Cyclic (CnH2n)",
-        ]
+        NAPH_CH_OPTION,
+    ],
 )
 
 # --- Updated Candidate Options for CHBr ---
@@ -237,6 +243,47 @@ if ("Highly Unsaturated (PAH: CnH2n+2-2u)" in candidate_options_CH or
 else:
     min_u, max_u = None, None
 
+# Configuration for alkylated naphthalene candidates (C10 core + alkyl chains)
+if NAPH_CH_OPTION in candidate_options_CH:
+    min_n_subs = int(
+        st.number_input(
+            "Minimum number of methyl substituents on naphthalene core (n)",
+            value=0,
+            min_value=0,
+            max_value=8,
+            step=1,
+        )
+    )
+    max_n_subs = int(
+        st.number_input(
+            "Maximum number of methyl substituents on naphthalene core (n)",
+            value=4,
+            min_value=min_n_subs,
+            max_value=8,
+            step=1,
+        )
+    )
+    min_x_total = int(
+        st.number_input(
+            "Minimum total added alkyl carbons (x)",
+            value=max(2, min_n_subs),
+            min_value=0,
+            max_value=40,
+            step=1,
+        )
+    )
+    max_x_total = int(
+        st.number_input(
+            "Maximum total added alkyl carbons (x)",
+            value=max(6, min_x_total),
+            min_value=max(min_x_total, min_n_subs),
+            max_value=40,
+            step=1,
+        )
+    )
+else:
+    min_n_subs = max_n_subs = min_x_total = max_x_total = None
+
 # Maximum number of Br atoms for CHBr candidates
 max_Br = st.number_input("Maximum number of Br atoms (for CHBr candidates)", value=3, min_value=1, step=1)
 
@@ -261,6 +308,9 @@ def hydrogen_count(candidate_type, n_C, u=None):
         if u is None:
             u = min_u  # default to min_u if not provided
         return 2 * n_C + 2 - 2 * u
+    elif candidate_type == NAPH_CH_OPTION:
+        # Hydrogen count handled explicitly in candidate generation for this option
+        return None
     else:
         return None
 
@@ -268,22 +318,38 @@ def hydrogen_count(candidate_type, n_C, u=None):
 def candidate_formulas_CH(target_mz, tol, candidate_types):
     candidates = []
     for cand_type in candidate_types:
-        for n_C in range(min_C, max_C + 1):
-            if cand_type == "Highly Unsaturated (PAH: CnH2n+2-2u)":
-                for u in range(int(min_u), int(max_u) + 1):
-                    n_H = hydrogen_count(cand_type, n_C, u)
-                    if n_H < 1:
-                        continue
-                    calc_mass = n_C * 12.0000 + n_H * 1.007825
+        # Handle alkylated naphthalene separately (doesn't use the standard carbon loop)
+        if cand_type == NAPH_CH_OPTION and min_n_subs is not None:
+            base_c = 10
+            base_h = 8
+            for n_subs in range(min_n_subs, max_n_subs + 1):
+                for x_total in range(max(n_subs, min_x_total), max_x_total + 1):
+                    total_c = base_c + x_total
+                    total_h = base_h + 2 * x_total
+                    calc_mass = total_c * 12.0000 + total_h * 1.007825
                     if abs(calc_mass - target_mz) <= tol:
-                        candidates.append(f"{cand_type}: C{n_C}H{n_H} (u={u})")
-            else:
-                n_H = hydrogen_count(cand_type, n_C)
-                if n_H < 1:
-                    continue
-                calc_mass = n_C * 12.0000 + n_H * 1.007825
-                if abs(calc_mass - target_mz) <= tol:
-                    candidates.append(f"{cand_type}: C{n_C}H{n_H}")
+                        candidates.append(
+                            f"{cand_type}: C{total_c}H{total_h} (n={n_subs}, x={x_total})"
+                        )
+        else:
+            # Standard formula types (alkane, alkene, etc.)
+            for n_C in range(min_C, max_C + 1):
+                if cand_type == "Highly Unsaturated (PAH: CnH2n+2-2u)":
+                    for u in range(int(min_u), int(max_u) + 1):
+                        n_H = hydrogen_count(cand_type, n_C, u)
+                        if n_H < 1:
+                            continue
+                        calc_mass = n_C * 12.0000 + n_H * 1.007825
+                        if abs(calc_mass - target_mz) <= tol:
+                            candidates.append(f"{cand_type}: C{n_C}H{n_H} (u={u})")
+                else:
+                    n_H = hydrogen_count(cand_type, n_C)
+                    if n_H is not None and n_H < 1:
+                        continue
+                    if n_H is not None:
+                        calc_mass = n_C * 12.0000 + n_H * 1.007825
+                        if abs(calc_mass - target_mz) <= tol:
+                            candidates.append(f"{cand_type}: C{n_C}H{n_H}")
     return candidates
 
 # Function to generate candidate formulas for CHBr
