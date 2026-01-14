@@ -1,15 +1,9 @@
 AmesPAHdbPythonSuite/
-AmesPAHdbPythonSuite/
 *.png
 *.csv
 __pycache__/
 output/
 DATA_IR-UV-Ion-Dip_Example/
 DATA_FELICE_example/
-DATA_IR-UV-Ion-Dip_Example/
-DATA_FELICE_example/
-<<<<<<< HEAD
-Figures/.venv/
-=======
 Figures/
->>>>>>> e87ddb70 (MAIN)
+.venv/
