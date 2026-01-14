@@ -176,22 +176,22 @@
         
 #         self.compiled_data2[self.wavenumber] = pd.concat([self.compiled_data[self.wavenumber], new_table], axis=1)
 #         return self.compiled_data2[self.wavenumber]
-#     # Danial's code: New baseline correction class using pybaselines methods
+#     # New baseline correction class using pybaselines methods
 # import numpy as np
 # import pandas as pd
-# from packages.BaselineCorrection import baseline  # Import Kevin's baseline class
+# from packages.BaselineCorrection import baseline
 
 # # Import pybaselines functions
 # from pybaselines import airPLS, asls, rubberband
 
 # class baseline_new(baseline):
 #     def __init__(self, *args, method="Mean Subtraction", **kwargs):
-#         # Call Kevin's baseline __init__
+#         # Call parent baseline __init__
 #         super().__init__(*args, **kwargs)
 #         self.method = method
 
 #     def baseline_correction(self):
-#         # For Mean Subtraction, use Kevin's routine (assumes baseline_mean has been computed)
+#         # For Mean Subtraction, use parent routine (assumes baseline_mean has been computed)
 #         if self.method == "Mean Subtraction":
 #             signal_withoutIR = self.data_withoutIR
 #             signal_withIR = self.data_withIR
@@ -357,7 +357,7 @@ class baseline:
 
 
 
-# Danial's code: New baseline correction class using pybaselines’ unified API
+# New baseline correction class using pybaselines' unified API
 from pybaselines import Baseline
 
 class baseline_new(baseline):
