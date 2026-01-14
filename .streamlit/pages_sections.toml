@@ -1,0 +1,97 @@
+[[pages]]
+path = ".streamlit/1.0_ImportData.py"
+name = "1. Import data"
+icon = "📥"
+
+[[pages]]
+path = ".streamlit/1.1_Wavenumbers.py"
+name = "1.1 Wavenumbers per file"
+icon = "📊"
+
+[[pages]]
+path = ".streamlit/1.2_UniqueWavenumbers.py"
+name = "1.2 Unique wavenumbers"
+icon = "🔍"
+
+[[pages]]
+path = ".streamlit/1.3_ExperimentParameters.py"
+name = "1.3 Experiment parameters"
+icon = "⚙️"
+
+[[pages]]
+path = ".streamlit/2.0_BaselineCorrection.py"
+name = "2. Baseline correction"
+icon = "📏"
+
+[[pages]]
+path = ".streamlit/2.1_BaselineCorrectionFullRange.py"
+name = "2.1 Baseline correction - full range"
+icon = "📈"
+
+[[pages]]
+path = ".streamlit/3.0_CalculateDepletion.py"
+name = "3. Data analysis"
+icon = "💪"
+
+[[pages]]
+path = ".streamlit/3.01_LaserNormalization.py"
+name = "3.01 Laser Normalization"
+icon = "🔦"
+
+[[pages]]
+path = ".streamlit/3.02_LaserNormalizationpart2.py"
+name = "3.02 Laser Normalization-P2"
+icon = "🔦"
+
+[[pages]]
+path = ".streamlit/3.1_Database.py"
+name = "3.1 Data analysis with Databases"
+icon = "🗄️"
+
+[[pages]]
+path = ".streamlit/3.11_DatabaseNIST.py"
+name = "3.11 Data analysis with Database NIST"
+icon = "🗄️"
+
+
+
+[[pages]]
+path = ".streamlit/4.0_Misc.py"
+name = "4. Miscellaneous"
+icon = "🌌"
+
+
+[[pages]]
+path = ".streamlit/4.1_MegaSum.py"
+name = "4.1 Mega sum"
+icon = "📦"
+
+[[pages]]
+path = ".streamlit/4.2_PeakDetection.py"
+name = "4.2 Peak Detection"
+icon = "🎯"
+
+[[pages]]
+path = ".streamlit/4.3_reference_spectrum.py"
+name = "4.3 Mass Reference"
+icon = "📋"
+
+[[pages]]
+path = ".streamlit/5.0_Smoothing.py"
+name = "5. Smoothing"
+icon = "🌊"
+
+[[pages]]
+path = ".streamlit/6.0_pah_generator.py"
+name = "6. PAH Generator"
+icon = "🧬"
+
+[[pages]]
+path = ".streamlit/6.1_Comparison.py"
+name = "6.1 Data Comparison"
+icon = "⚖️"
+
+[[pages]]
+path = ".streamlit/7.0_LaserNormalization.py"
+name = "7.0 Laser Normalization"
+icon = "✨"

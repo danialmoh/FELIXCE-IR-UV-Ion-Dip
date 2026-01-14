@@ -1,0 +1,4 @@
+st-pages-1.0.1
+streamlit-1.39.0
+h5py
+plotly

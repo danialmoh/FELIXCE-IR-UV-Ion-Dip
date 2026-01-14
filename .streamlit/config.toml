@@ -1,0 +1,3 @@
+[server]
+maxUploadSize = 4000  # Increase max upload size to 4GB
+maxMessageSize = 4194304000 # Increase max message size to 4GB
