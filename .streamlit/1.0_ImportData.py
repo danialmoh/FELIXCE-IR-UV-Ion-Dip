@@ -11,10 +11,17 @@ from packages.FELIX_HDF5_ReadData import *
 uploaded_files = st.file_uploader("Select HDF5 files to read (adds files to existing list, click `x` to remove)", accept_multiple_files=True, type=["h5"])
 directory_input = st.text_input(
     "Enter file directory where data is saved. All outputs will be saved here.",
-    value=st.session_state.get("file_directory", "/Users/danialmoh/Library/CloudStorage/OneDrive-KULeuven/Thesis/All scans"),
+    value=st.session_state.get("file_directory", ""),
 ).strip()
 st.session_state["file_directory"] = directory_input
 st.session_state["step_size"] = st.text_input("Enter the step size of your scans. (not yet working)")
+st.session_state["min_wavenumber_count"] = st.number_input(
+    "Minimum count threshold for wavenumbers (only wavenumbers appearing more than this value will be included)",
+    min_value=0,
+    value=st.session_state.get("min_wavenumber_count", 3),
+    step=1,
+    help="Filter out wavenumbers that appear fewer times than this threshold"
+)
 
 
 # Initialize variables
@@ -79,7 +86,8 @@ if st.button("📖 click this button to import, read, and process the H5 files. 
     # Compile data # We tell the worker, "Now take all the data you extracted and organize it. Group the signals by their wavenumbers."
     compiled_data = raw_data.compile_FELIX_data() # compile data on a per wavenumber basis
     x = raw_data.check_wavenumbers() #We tell the worker, "Lay out all the wavenumbers you've seen in the files. I want to make sure there are no missing or duplicate ones."
-    unique_wavenumbers, unique_wavenumbers_df = raw_data.get_wavenumbers()
+    min_count = st.session_state.get("min_wavenumber_count", 3)
+    unique_wavenumbers, unique_wavenumbers_df = raw_data.get_wavenumbers(min_count=min_count)
     
     print("\n")
     print("List of unique wavenumbers should match the dataframe")

@@ -292,6 +292,15 @@ with col3:
         index=default_idx,
         format_func=lambda x: f"{x:.2f}",
     )
+    
+    # Display count for selected wavenumber
+    unique_wavenumbers_df = st.session_state.get("unique_wavenumbers_df")
+    if unique_wavenumbers_df is not None:
+        selected_wn = st.session_state["check_wavenumber"]
+        matching_rows = unique_wavenumbers_df[unique_wavenumbers_df["Unique Wavenumbers"] == selected_wn]
+        if not matching_rows.empty:
+            count = matching_rows.iloc[0]["Counts"]
+            st.info(f"📊 Count for wavenumber {selected_wn:.2f}: **{int(count)}**")
     st.session_state["y_max0"] = float(
         st.text_input("Maximum y-value for top plot", value=st.session_state.get("y_max0", 0.05))
     )
@@ -369,90 +378,89 @@ if st.button("✨ Register parameters and make plot!"):
     st.session_state["mass_range_indices"] = mass_range_indices
     st.session_state["baseline_range_indices"] = baseline_range_indices
 
-    tab_raw, tab_corrected = st.tabs(
-        ["📈 Raw mass spectra", "✨ Baseline-corrected spectra"]
+    # Plot both raw and corrected spectra stacked vertically
+    fig, (ax_raw, ax_corr) = plt.subplots(2, 1, figsize=(10, 8))
+    
+    # Raw mass spectra
+    ax_raw.axvline(
+        mass_complex,
+        alpha=0.75,
+        linestyle="solid",
+        linewidth=1,
+        color="green",
+        label=complex_name,
     )
-
-    with tab_raw:
-        fig_raw, ax_raw = plt.subplots()
-        ax_raw.axvline(
-            mass_complex,
-            alpha=0.75,
-            linestyle="solid",
-            linewidth=1,
-            color="green",
-            label=complex_name,
-        )
-        ax_raw.plot(
-            x_mass[mass_range_indices],
-            compiled_data[check_wavenumber].iloc[
-                mass_range_indices, plot_columnIndex_withoutIR
-            ],
-            label=compiled_data[check_wavenumber].columns[
-                plot_columnIndex_withoutIR
-            ],
-        )
-        ax_raw.plot(
-            x_mass[mass_range_indices],
-            compiled_data[check_wavenumber].iloc[
-                mass_range_indices, plot_columnIndex_withIR
-            ],
-            label=compiled_data[check_wavenumber].columns[
-                plot_columnIndex_withIR
-            ],
-        )
-        ax_raw.fill_between(
-            x_mass[baseline_range_indices], 0.1, color="lightgray", label="baseline range"
-        )
-        ax_raw.hlines(
-            0,
-            xmin=x_mass[mass_range_indices][0],
-            xmax=x_mass[mass_range_indices][-1],
-            color="lime",
-        )
-        ax_raw.set_ylim(-0.001, y_max0)
-        ax_raw.legend(fontsize=6)
-        ax_raw.set_xlabel("Mass (amu)")
-        ax_raw.set_ylabel("Intensity")
-        st.pyplot(fig_raw)
-        plt.close(fig_raw)
-
-    with tab_corrected:
-        fig_corr, ax_corr = plt.subplots()
-        ax_corr.axvline(
-            mass_complex,
-            alpha=0.75,
-            linestyle="solid",
-            linewidth=1,
-            color="green",
-            label=complex_name,
-        )
-        ax_corr.plot(
-            x_mass[mass_range_indices],
-            baseline_corrected_data.iloc[mass_range_indices, 0],
-            label="baseline corrected signal without IR",
-        )
-        ax_corr.plot(
-            x_mass[mass_range_indices],
-            baseline_corrected_data.iloc[mass_range_indices, 1],
-            label="baseline corrected signal with IR",
-        )
-        ax_corr.fill_between(
-            x_mass[baseline_range_indices], 0.1, color="lightgray", label="baseline range"
-        )
-        ax_corr.hlines(
-            0,
-            xmin=x_mass[mass_range_indices][0],
-            xmax=x_mass[mass_range_indices][-1],
-            color="lime",
-        )
-        ax_corr.set_xlim(mass_complex - 5, mass_complex + 5)
-        ax_corr.set_ylim(-0.001, y_max1)
-        ax_corr.legend(fontsize=6)
-        ax_corr.set_xlabel("Mass (amu)")
-        ax_corr.set_ylabel("Intensity")
-        st.pyplot(fig_corr)
-        plt.close(fig_corr)
+    ax_raw.plot(
+        x_mass[mass_range_indices],
+        compiled_data[check_wavenumber].iloc[
+            mass_range_indices, plot_columnIndex_withoutIR
+        ],
+        label=compiled_data[check_wavenumber].columns[
+            plot_columnIndex_withoutIR
+        ],
+    )
+    ax_raw.plot(
+        x_mass[mass_range_indices],
+        compiled_data[check_wavenumber].iloc[
+            mass_range_indices, plot_columnIndex_withIR
+        ],
+        label=compiled_data[check_wavenumber].columns[
+            plot_columnIndex_withIR
+        ],
+    )
+    ax_raw.fill_between(
+        x_mass[baseline_range_indices], 0.1, color="lightgray", label="baseline range"
+    )
+    ax_raw.hlines(
+        0,
+        xmin=x_mass[mass_range_indices][0],
+        xmax=x_mass[mass_range_indices][-1],
+        color="lime",
+    )
+    ax_raw.set_ylim(-0.001, y_max0)
+    ax_raw.legend(fontsize=6)
+    ax_raw.set_xlabel("Mass (amu)")
+    ax_raw.set_ylabel("Intensity")
+    ax_raw.set_title("📈 Raw mass spectra")
+    
+    # Baseline-corrected spectra
+    ax_corr.axvline(
+        mass_complex,
+        alpha=0.75,
+        linestyle="solid",
+        linewidth=1,
+        color="green",
+        label=complex_name,
+    )
+    ax_corr.plot(
+        x_mass[mass_range_indices],
+        baseline_corrected_data.iloc[mass_range_indices, 0],
+        label="baseline corrected signal without IR",
+    )
+    ax_corr.plot(
+        x_mass[mass_range_indices],
+        baseline_corrected_data.iloc[mass_range_indices, 1],
+        label="baseline corrected signal with IR",
+    )
+    ax_corr.fill_between(
+        x_mass[baseline_range_indices], 0.1, color="lightgray", label="baseline range"
+    )
+    ax_corr.hlines(
+        0,
+        xmin=x_mass[mass_range_indices][0],
+        xmax=x_mass[mass_range_indices][-1],
+        color="lime",
+    )
+    ax_corr.set_xlim(mass_complex - 5, mass_complex + 5)
+    ax_corr.set_ylim(-0.001, y_max1)
+    ax_corr.legend(fontsize=6)
+    ax_corr.set_xlabel("Mass (amu)")
+    ax_corr.set_ylabel("Intensity")
+    ax_corr.set_title("✨ Baseline-corrected spectra")
+    
+    plt.tight_layout()
+    st.pyplot(fig)
+    plt.close(fig)
 # import streamlit as st
 # import matplotlib.pyplot as plt
 # import numpy as np

@@ -28,7 +28,7 @@ with st.expander("Import HDF5 Files", expanded=True):
         "Enter file directory where data is saved. All outputs will be saved here.",
         value=st.session_state.get(
             "file_directory",
-            "/Users/danialmoh/Library/CloudStorage/OneDrive-KULeuven/Thesis/All scans",
+            "",
         ),
     ).strip()
     st.session_state["file_directory"] = directory_input

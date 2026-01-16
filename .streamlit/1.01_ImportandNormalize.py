@@ -19,7 +19,7 @@ if "normalized_data" not in st.session_state:
 with st.expander("Import HDF5 Files", expanded=True):
     uploaded_files = st.file_uploader("Select HDF5 files to read", accept_multiple_files=True, type=["h5"])
     st.session_state["file_directory"] = st.text_input("Enter file directory where data is saved. All outputs will be saved here.", 
-                                                      value=st.session_state.get("file_directory", "/Users/danialmoh/Library/CloudStorage/OneDrive-KULeuven/Thesis/All scans"))
+                                                      value=st.session_state.get("file_directory", ""))
     
     # Power normalization file upload
     power_file = st.file_uploader(

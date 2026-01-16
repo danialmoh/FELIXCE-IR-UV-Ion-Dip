@@ -1053,6 +1053,15 @@ with st.expander("Step 2 · Mass & plot configuration", expanded=False):
                 format_func=lambda x: f"{x:.2f}",
                 help="Select from wavenumbers available in compiled data.",
             )
+            
+            # Display count for selected wavenumber
+            unique_wavenumbers_df = st.session_state.get("unique_wavenumbers_df")
+            if unique_wavenumbers_df is not None:
+                selected_wn = st.session_state["check_wavenumber"]
+                matching_rows = unique_wavenumbers_df[unique_wavenumbers_df["Unique Wavenumbers"] == selected_wn]
+                if not matching_rows.empty:
+                    count = matching_rows.iloc[0]["Counts"]
+                    st.info(f"📊 Count for wavenumber {selected_wn:.2f}: **{int(count)}**")
         else:
             st.info(
                 "No compiled wavenumbers available yet. Run earlier steps to populate data.",
@@ -1522,7 +1531,7 @@ if run_button:
     #     with st.form("theory_form"):
     #         xml_path = st.text_input(
     #             "Enter path to PAH XML file",
-    #             value="/Users/danialmoh/Library/CloudStorage/OneDrive-KULeuven/Thesis/Databases/pahdb-complete-theoretical-v4.00-alpha.xml"  # Replace with your XML file path
+    #             value=""
     #         )
     #         uid_input = st.text_input("Enter PAH UID (e.g., 18 for coronene)", value="495")
     #         conv_type = st.selectbox("Convolution Type", options=["Gaussian", "Lorentzian"], index=0)

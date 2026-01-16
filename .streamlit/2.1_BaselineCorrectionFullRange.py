@@ -775,127 +775,72 @@ if st.button("**:blue[#2]** 🚀 Plot full range data"):
     x_min2 = st.session_state.get("x_min2", None)
     x_max2 = st.session_state.get("x_max2", None)
 
-    tab_mass, tab_depletion, tab_ln = st.tabs(
-        ["📈 Mass spectra", "💥 Depletion", "📉 −ln(Depletion)"]
+    # Mass spectra plot (no tabs)
+    st.markdown("### 📈 Mass Spectra")
+    fig_mass = go.Figure()
+    fig_mass.add_trace(
+        go.Scatter(
+            x=x_mass[:],
+            y=compilation_baseline_corrected_data[check_wavenumber].iloc[
+                :, plot_columnIndex_withoutIR
+            ],
+            mode="lines",
+            name=compilation_baseline_corrected_data[check_wavenumber].columns[
+                plot_columnIndex_withoutIR
+            ],
+            line=dict(color="#1f77b4"),
+            opacity=0.75,
+        )
     )
-
-    with tab_mass:
-        fig_mass = go.Figure()
-        fig_mass.add_trace(
-            go.Scatter(
-                x=x_mass[:],
-                y=compilation_baseline_corrected_data[check_wavenumber].iloc[
-                    :, plot_columnIndex_withoutIR
-                ],
-                mode="lines",
-                name=compilation_baseline_corrected_data[check_wavenumber].columns[
-                    plot_columnIndex_withoutIR
-                ],
-                line=dict(color="#1f77b4"),
-                opacity=0.75,
-            )
+    fig_mass.add_trace(
+        go.Scatter(
+            x=x_mass[:],
+            y=compilation_baseline_corrected_data[check_wavenumber].iloc[
+                :, plot_columnIndex_withIR
+            ],
+            mode="lines",
+            name=compilation_baseline_corrected_data[check_wavenumber].columns[
+                plot_columnIndex_withIR
+            ],
+            line=dict(color="#ff7f0e"),
+            opacity=0.75,
         )
-        fig_mass.add_trace(
-            go.Scatter(
-                x=x_mass[:],
-                y=compilation_baseline_corrected_data[check_wavenumber].iloc[
-                    :, plot_columnIndex_withIR
-                ],
-                mode="lines",
-                name=compilation_baseline_corrected_data[check_wavenumber].columns[
-                    plot_columnIndex_withIR
-                ],
-                line=dict(color="#ff7f0e"),
-                opacity=0.75,
-            )
+    )
+    fig_mass.add_trace(
+        go.Scatter(
+            x=[mass_complex, mass_complex],
+            y=[-0.001, y_max2],
+            mode="lines",
+            line=dict(color="green", width=1, dash="solid"),
+            name=str(complex),
         )
-        fig_mass.add_trace(
-            go.Scatter(
-                x=[mass_complex, mass_complex],
-                y=[-0.001, y_max2],
-                mode="lines",
-                line=dict(color="green", width=1, dash="solid"),
-                name=str(complex),
-            )
+    )
+    fig_mass.add_shape(
+        type="rect",
+        x0=min(x_mass[baseline_range_indices]),
+        y0=0,
+        x1=max(x_mass[baseline_range_indices]),
+        y1=y_max2,
+        fillcolor="lightsteelblue",
+        line=dict(color="rgba(0,0,0,0)"),
+        opacity=0.4,
+        layer="below",
+    )
+    fig_mass.add_trace(
+        go.Scatter(
+            x=[x_mass[mass_range_indices][0], x_mass[mass_range_indices][-1]],
+            y=[0, 0],
+            mode="lines",
+            line=dict(color="lime", width=1),
+            name="zero line",
         )
-        fig_mass.add_shape(
-            type="rect",
-            x0=min(x_mass[baseline_range_indices]),
-            y0=0,
-            x1=max(x_mass[baseline_range_indices]),
-            y1=y_max2,
-            fillcolor="lightsteelblue",
-            line=dict(color="rgba(0,0,0,0)"),
-            opacity=0.4,
-            layer="below",
-        )
-        fig_mass.add_trace(
-            go.Scatter(
-                x=[x_mass[mass_range_indices][0], x_mass[mass_range_indices][-1]],
-                y=[0, 0],
-                mode="lines",
-                line=dict(color="lime", width=1),
-                name="zero line",
-            )
-        )
-        fig_mass.update_layout(
-            yaxis=dict(range=[-0.001, y_max2]),
-            xaxis_title="Mass (amu)",
-            yaxis_title="Intensity",
-            xaxis=dict(range=[x_min2, x_max2]),
-            title=f"{complex} – signals",
-            legend=dict(x=0.8, y=0.9),
-        )
-        st.plotly_chart(fig_mass, use_container_width=True)
-
-    with tab_depletion:
-        fig_dep = go.Figure()
-        fig_dep.add_trace(
-            go.Scatter(
-                x=st.session_state.fullrange_depletion_data.iloc[:, 0],
-                y=st.session_state.fullrange_depletion_data.iloc[:, 3],
-                mode="lines",
-                name="Depletion",
-            )
-        )
-        fig_dep.add_trace(
-            go.Scatter(
-                x=[st.session_state["depletion_xmin"], st.session_state["depletion_xmax"]],
-                y=[0, 0],
-                mode="lines",
-                line=dict(color="lime", width=1),
-                name="zero line",
-            )
-        )
-        fig_dep.update_layout(
-            xaxis_title="Wavenumber (cm⁻¹)",
-            yaxis_title="Depletion",
-            title="Full-range depletion",
-        )
-        st.plotly_chart(fig_dep, use_container_width=True)
-
-    with tab_ln:
-        fig_ln = go.Figure()
-        fig_ln.add_trace(
-            go.Scatter(
-                x=st.session_state.fullrange_depletion_data.iloc[:, 0],
-                y=st.session_state.fullrange_depletion_data.iloc[:, 4],
-                mode="lines",
-                name="-ln(Depletion)",
-            )
-        )
-        fig_ln.add_trace(
-            go.Scatter(
-                x=[st.session_state["depletion_xmin"], st.session_state["depletion_xmax"]],
-                y=[0, 0],
-                mode="lines",
-                line=dict(color="lime", width=1),
-                name="zero line",
-            )
-        )
-        fig_ln.update_layout(
-            xaxis_title="Wavenumber (cm⁻¹)",
-            yaxis_title="-ln(Depletion)",
-            title="Full-range -ln(Depletion)",
-        )
-        st.plotly_chart(fig_ln, use_container_width=True)
+    )
+    fig_mass.update_layout(
+        yaxis=dict(range=[-0.001, y_max2]),
+        xaxis_title="Mass (amu)",
+        yaxis_title="Intensity",
+        xaxis=dict(range=[x_min2, x_max2]),
+        title=f"{complex} – signals",
+        legend=dict(x=0.8, y=0.9),
+    )
+    st.plotly_chart(fig_mass, use_container_width=True)

@@ -676,7 +676,7 @@ if st.button("Plot Candidate Annotations"):
     plt.tight_layout()
     
     # SAVE THE FIGURE TO THE DEFAULT DIRECTORY
-    directory = "/Users/danialmoh/Library/CloudStorage/OneDrive-KULeuven/Thesis/Mass Anlysis"
+    directory = st.session_state.get("file_directory", "./output")
     filename = f"{directory}/spectrum_{x_min:.2f}_{x_max:.2f}_{y_max:.2f}_{annotation_style.replace(' ', '_')}.png"
     plt.savefig(filename, dpi=300)
     st.success(f"Figure saved as '{filename}'.")
@@ -821,7 +821,7 @@ if st.button("Plot Fragmentation-Parent-Clustering View"):
     plt.tight_layout()
 
     # 8) (Optional) Save the figure
-    directory = "/Users/danialmoh/Library/CloudStorage/OneDrive-KULeuven/Thesis/Mass Anlysis"
+    directory = st.session_state.get("file_directory", "./output")
     filename = f"{directory}/fragmentation_parent_clustering_custom_range.png"
     plt.savefig(filename, dpi=300)
 
