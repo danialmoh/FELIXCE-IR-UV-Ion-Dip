@@ -13,13 +13,29 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# Configure dashboard with custom CSS for larger logo
+st.markdown("""
+<style>
+[data-testid="stLogo"] {
+    height: 8rem !important;
+    margin-bottom: -5rem !important;
+    padding-bottom: -5rem !important;
+}
+[data-testid="stLogo"] img {
+    height: 8rem !important;
+    width: auto !important;
+    margin-bottom: -5rem !important;
+    padding-bottom: -5rem !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
+st.logo(r"logo_FELIXCE_solid.png")
+
 # Sidebar branding and credits
 with st.sidebar:
     # st.markdown("---")
-    col1, col2 = st.columns([1, 2])
-    with col1:
-        st.image("image.png", width=120)
-    
+
     st.markdown(
         """
         # IR/UV Ion-Dip Data Analysis Pipeline
@@ -46,12 +62,14 @@ with st.sidebar:
         st.markdown("#### 📥 Data Import")
         if st.button("📥 Import data", use_container_width=True, key="btn_import"):
             st.switch_page(".streamlit/1.0_ImportData.py")
-        if st.button("📊 1.1 Wavenumbers per file", use_container_width=True, key="btn_wav1"):
-            st.switch_page(".streamlit/1.1_Wavenumbers.py")
-        if st.button("🔍 1.2 Unique wavenumbers", use_container_width=True, key="btn_wav2"):
-            st.switch_page(".streamlit/1.2_UniqueWavenumbers.py")
-        if st.button("⚙️ 1.3 Experiment parameters", use_container_width=True, key="btn_exp"):
-            st.switch_page(".streamlit/1.3_ExperimentParameters.py")
+        if st.button("📊 1.1 Wavenumbers per file (unmodified)", use_container_width=True, key="btn_wav1"):
+            st.switch_page(".streamlit/1.1_Wavenumbers_raw.py")
+        if st.button("📊 1.2 Wavenumbers per file (rounded)", use_container_width=True, key="btn_wav2"):
+            st.switch_page(".streamlit/1.2_Wavenumbers.py")
+        if st.button("🔍 1.3 Unique wavenumbers", use_container_width=True, key="btn_wav3"):
+            st.switch_page(".streamlit/1.3_UniqueWavenumbers.py")
+        if st.button("⚙️ 1.4 Experiment parameters", use_container_width=True, key="btn_exp"):
+            st.switch_page(".streamlit/1.4_ExperimentParameters.py")
     
     # Section 2: Baseline Correction
     with st.container(border=True):
