@@ -26,7 +26,7 @@
 # mass_complex = st.session_state.get("mass_complex", None)
 # mass_range_indices = st.session_state.get("mass_range_indices", None)
 # baseline_range_indices = st.session_state.get("baseline_range_indices",None)
-# check_wavenumber = st.session_state.get("check_wavenumber", None)
+# plot_wavenumber = st.session_state.get("plot_wavenumber", None)
 # plot_columnIndex_withoutIR = st.session_state.get("plot_columnIndex_withoutIR", None)
 # plot_columnIndex_withIR = st.session_state.get("plot_columnIndex_withIR", None)
 # compilation_baseline_corrected_data = st.session_state.get("compilation_baseline_corrected_data", None)
@@ -84,14 +84,14 @@
 #     st.markdown("#### Plot parameters")
 #     st.session_state["plot_columnIndex_withoutIR"] = int(st.number_input("Column index for signal without IR irradiation", value = st.session_state.get("plot_columnIndex_withoutIR", -2)))
 #     st.session_state["plot_columnIndex_withIR"] = int(st.number_input("Column index for signal with IR irradiation", value = st.session_state.get("plot_columnIndex_withIR", -1)))
-#     st.session_state["check_wavenumber"] = float(st.text_input("Wavenumber to check plots", value = st.session_state.get("check_wavenumber",400.0)))
+#     st.session_state["plot_wavenumber"] = float(st.text_input("Wavenumber to check plots", value = st.session_state.get("plot_wavenumber",400.0)))
     
 
 # with col5:
 #     st.markdown("#### ")
-#     st.session_state["x_min2"] = float(st.text_input("Mass Spectra: minimum x-value", value = st.session_state.get("x_min2", 0.0)))
-#     st.session_state["x_max2"] = float(st.text_input("Mass Spectra: maximum x-value", value = st.session_state.get("x_max2", 1300)))
-#     st.session_state["y_max2"] = float(st.text_input("Mass Spectra: maximum y-value", value = st.session_state.get("y_max2",0.1)))
+#     st.session_state["mass_xmin"] = float(st.text_input("Mass Spectra: minimum x-value", value = st.session_state.get("mass_xmin", 0.0)))
+#     st.session_state["mass_xmax"] = float(st.text_input("Mass Spectra: maximum x-value", value = st.session_state.get("mass_xmax", 1300)))
+#     st.session_state["mass_ymax"] = float(st.text_input("Mass Spectra: maximum y-value", value = st.session_state.get("mass_ymax",0.1)))
     
 
 # with col6:
@@ -108,12 +108,12 @@
 #     isotope_scan_width = st.session_state.get("isotope_scan_width", None)
 #     x_mass = st.session_state.get("x_mass", None)
 #     compilation_baseline_corrected_data = st.session_state.get("compilation_baseline_corrected_data", None)
-#     check_wavenumber = st.session_state.get("check_wavenumber", None)
+#     plot_wavenumber = st.session_state.get("plot_wavenumber", None)
 #     plot_columnIndex_withoutIR = st.session_state.get("plot_columnIndex_withoutIR", None)
 #     plot_columnIndex_withIR = st.session_state.get("plot_columnIndex_withIR", None)
-#     x_min2 = st.session_state.get("x_min2", None)
-#     x_max2 = st.session_state.get("x_max2", None)
-#     y_max2 = st.session_state.get("y_max2", None)
+#     mass_xmin = st.session_state.get("mass_xmin", None)
+#     mass_xmax = st.session_state.get("mass_xmax", None)
+#     mass_ymax = st.session_state.get("mass_ymax", None)
 #     depletion_ymin = st.session_state.get("depletion_ymin", None)
 #     depletion_ymax = st.session_state.get("depletion_ymax", None)
 #     ln_depletion_ymin = st.session_state.get("ln_depletion_ymin", None)
@@ -161,7 +161,7 @@
 #         # Plot vertical line at mass_complex
 #         fig.add_trace(go.Scatter(
 #             x=[mass_complex, mass_complex],
-#             y=[-0.001, y_max2],
+#             y=[-0.001, mass_ymax],
 #             mode='lines',
 #             line=dict(color="green", width=2, dash="solid"),
 #             name=str(complex)+" average mass"
@@ -172,7 +172,7 @@
 #             # Add vertical line for each isotope
 #             fig.add_trace(go.Scatter(
 #                 x=[isotope, isotope],
-#                 y=[0, y_max2],  # Adjust the y range according to your data
+#                 y=[0, mass_ymax],  # Adjust the y range according to your data
 #                 mode='lines',
 #                 line=dict(color='black', width=2),
 #                 showlegend=False
@@ -184,7 +184,7 @@
 #                 x0 = isotope - isotope_scan_width,
 #                 x1 = isotope + isotope_scan_width,
 #                 y0 = 0,
-#                 y1 = y_max2,
+#                 y1 = mass_ymax,
 #                 fillcolor='lightgray',
 #                 line=dict(color='rgba(0,0,0,0)'),
 #                 opacity=0.4,
@@ -213,9 +213,9 @@
 #         # Plot data for "without IR" signal
 #         fig.add_trace(go.Scatter(
 #             x=x_mass[:],
-#             y=compilation_baseline_corrected_data[check_wavenumber].iloc[:, plot_columnIndex_withoutIR],
+#             y=compilation_baseline_corrected_data[plot_wavenumber].iloc[:, plot_columnIndex_withoutIR],
 #             mode='lines',
-#             name=compilation_baseline_corrected_data[check_wavenumber].columns[plot_columnIndex_withoutIR],
+#             name=compilation_baseline_corrected_data[plot_wavenumber].columns[plot_columnIndex_withoutIR],
 #             line=dict(color= "#1f77b4"),
 #             opacity=1
 #         ))
@@ -223,9 +223,9 @@
 #         # Plot data for "with IR" signal
 #         fig.add_trace(go.Scatter(
 #             x=x_mass[:],
-#             y=compilation_baseline_corrected_data[check_wavenumber].iloc[:, plot_columnIndex_withIR],
+#             y=compilation_baseline_corrected_data[plot_wavenumber].iloc[:, plot_columnIndex_withIR],
 #             mode='lines',
-#             name=compilation_baseline_corrected_data[check_wavenumber].columns[plot_columnIndex_withIR],
+#             name=compilation_baseline_corrected_data[plot_wavenumber].columns[plot_columnIndex_withIR],
 #             line=dict(color="#ff7f0e"),
 #             opacity=1
 #         ))
@@ -238,7 +238,7 @@
 #             x0=min(x_mass[baseline_range_indices]),  # Starting x coordinate
 #             y0=0,                                    # Starting y coordinate
 #             x1=max(x_mass[baseline_range_indices]),  # Ending x coordinate
-#             y1=y_max2,                               # Ending y coordinate
+#             y1=mass_ymax,                               # Ending y coordinate
 #             fillcolor="lightsteelblue",                   # Fill color
 #             line=dict(color='rgba(0,0,0,0)'),            # Border color
 #             opacity = 0.4,
@@ -265,10 +265,10 @@
 
 #         # Update layout for the plot
 #         fig.update_layout(
-#             yaxis=dict(range=[-0.001, y_max2]),
+#             yaxis=dict(range=[-0.001, mass_ymax]),
 #             xaxis_title="Mass (amu)",
 #             yaxis_title="Intensity",
-#             xaxis=dict(range=[x_min2, x_max2]),
+#             xaxis=dict(range=[mass_xmin, mass_xmax]),
 #             title=complex,
 #             legend=dict(x=0.8, y=0.9)
 #         )
@@ -293,14 +293,14 @@
 #         ax.axvline(0,0, color='black', label='Isotope peaks')
 #         ax.axvline(0,0, color='lightgray', label='scan width range')
         
-#         ax.plot(x_mass[:],compilation_baseline_corrected_data[check_wavenumber].iloc[:,plot_columnIndex_withoutIR], label=f"{compilation_baseline_corrected_data[check_wavenumber].columns[plot_columnIndex_withoutIR]}")
-#         ax.plot(x_mass[:],compilation_baseline_corrected_data[check_wavenumber].iloc[:,plot_columnIndex_withIR], label = f"{compilation_baseline_corrected_data[check_wavenumber].columns[plot_columnIndex_withIR]}")
+#         ax.plot(x_mass[:],compilation_baseline_corrected_data[plot_wavenumber].iloc[:,plot_columnIndex_withoutIR], label=f"{compilation_baseline_corrected_data[plot_wavenumber].columns[plot_columnIndex_withoutIR]}")
+#         ax.plot(x_mass[:],compilation_baseline_corrected_data[plot_wavenumber].iloc[:,plot_columnIndex_withIR], label = f"{compilation_baseline_corrected_data[plot_wavenumber].columns[plot_columnIndex_withIR]}")
         
 #         ax.fill_between(x_mass[baseline_range_indices],0.2, color = "lightsteelblue", label = "baseline range")
 #         ax.hlines(0,xmin = x_mass[mass_range_indices][0], xmax =x_mass[mass_range_indices][-1], color="lime")
 
-#         ax.set_xlim(x_min2, x_max2)
-#         ax.set_ylim(-0.001, y_max2)
+#         ax.set_xlim(mass_xmin, mass_xmax)
+#         ax.set_ylim(-0.001, mass_ymax)
 #         ax.set_xlabel("Mass (amu)")
 #         ax.set_ylabel("Intensity")
 #         ax.legend(fontsize=5)
@@ -475,7 +475,7 @@
 # mass_complex = st.session_state.get("mass_complex", None)
 # mass_range_indices = st.session_state.get("mass_range_indices", None)
 # baseline_range_indices = st.session_state.get("baseline_range_indices", None)
-# check_wavenumber = st.session_state.get("check_wavenumber", None)
+# plot_wavenumber = st.session_state.get("plot_wavenumber", None)
 # plot_columnIndex_withoutIR = st.session_state.get("plot_columnIndex_withoutIR", None)
 # plot_columnIndex_withIR = st.session_state.get("plot_columnIndex_withIR", None)
 # compilation_baseline_corrected_data = st.session_state.get("compilation_baseline_corrected_data", None)
@@ -532,17 +532,17 @@
 #                                                                          value=st.session_state.get("plot_columnIndex_withoutIR", -2)))
 #     st.session_state["plot_columnIndex_withIR"] = int(st.number_input("Column index for signal with IR irradiation",
 #                                                                       value=st.session_state.get("plot_columnIndex_withIR", -1)))
-#     st.session_state["check_wavenumber"] = float(st.text_input("Wavenumber to check plots",
-#                                                                value=st.session_state.get("check_wavenumber", 400.0)))
+#     st.session_state["plot_wavenumber"] = float(st.text_input("Wavenumber to check plots",
+#                                                                value=st.session_state.get("plot_wavenumber", 400.0)))
 
 # with col5:
 #     st.markdown("#### Mass Spectra parameters")
-#     st.session_state["x_min2"] = float(st.text_input("Mass Spectra: minimum x-value",
-#                                                      value=st.session_state.get("x_min2", 0.0)))
-#     st.session_state["x_max2"] = float(st.text_input("Mass Spectra: maximum x-value",
-#                                                      value=st.session_state.get("x_max2", 1300)))
-#     st.session_state["y_max2"] = float(st.text_input("Mass Spectra: maximum y-value",
-#                                                      value=st.session_state.get("y_max2", 0.1)))
+#     st.session_state["mass_xmin"] = float(st.text_input("Mass Spectra: minimum x-value",
+#                                                      value=st.session_state.get("mass_xmin", 0.0)))
+#     st.session_state["mass_xmax"] = float(st.text_input("Mass Spectra: maximum x-value",
+#                                                      value=st.session_state.get("mass_xmax", 1300)))
+#     st.session_state["mass_ymax"] = float(st.text_input("Mass Spectra: maximum y-value",
+#                                                      value=st.session_state.get("mass_ymax", 0.1)))
 
 # with col6:
 #     st.markdown("#### Depletion parameters")
@@ -577,12 +577,12 @@
 #     isotope_scan_width = st.session_state.get("isotope_scan_width", None)
 #     x_mass = st.session_state.get("x_mass", None)
 #     compilation_baseline_corrected_data = st.session_state.get("compilation_baseline_corrected_data", None)
-#     check_wavenumber = st.session_state.get("check_wavenumber", None)
+#     plot_wavenumber = st.session_state.get("plot_wavenumber", None)
 #     plot_columnIndex_withoutIR = st.session_state.get("plot_columnIndex_withoutIR", None)
 #     plot_columnIndex_withIR = st.session_state.get("plot_columnIndex_withIR", None)
-#     x_min2 = st.session_state.get("x_min2", None)
-#     x_max2 = st.session_state.get("x_max2", None)
-#     y_max2 = st.session_state.get("y_max2", None)
+#     mass_xmin = st.session_state.get("mass_xmin", None)
+#     mass_xmax = st.session_state.get("mass_xmax", None)
+#     mass_ymax = st.session_state.get("mass_ymax", None)
 #     save_output = st.session_state.get("save_output")
     
 #     # Retrieve depletion parameters (initially from user inputs)
@@ -665,7 +665,7 @@
 #         # Plot average mass vertical line
 #         fig.add_trace(go.Scatter(
 #             x=[mass_complex, mass_complex],
-#             y=[-0.001, y_max2],
+#             y=[-0.001, mass_ymax],
 #             mode='lines',
 #             line=dict(color="green", width=2, dash="solid"),
 #             name=f"{complex} average mass"
@@ -674,7 +674,7 @@
 #         for index, isotope in enumerate(list_mass_isotope):
 #             fig.add_trace(go.Scatter(
 #                 x=[isotope, isotope],
-#                 y=[0, y_max2],
+#                 y=[0, mass_ymax],
 #                 mode='lines',
 #                 line=dict(color='black', width=2),
 #                 showlegend=False
@@ -684,7 +684,7 @@
 #                 x0=isotope - isotope_scan_width,
 #                 x1=isotope + isotope_scan_width,
 #                 y0=0,
-#                 y1=y_max2,
+#                 y1=mass_ymax,
 #                 fillcolor='lightgray',
 #                 line=dict(color='rgba(0,0,0,0)'),
 #                 opacity=0.4,
@@ -709,17 +709,17 @@
 #         # Plot the signals (without and with IR)
 #         fig.add_trace(go.Scatter(
 #             x=x_mass[:],
-#             y=compilation_baseline_corrected_data[check_wavenumber].iloc[:, plot_columnIndex_withoutIR],
+#             y=compilation_baseline_corrected_data[plot_wavenumber].iloc[:, plot_columnIndex_withoutIR],
 #             mode='lines',
-#             name=compilation_baseline_corrected_data[check_wavenumber].columns[plot_columnIndex_withoutIR],
+#             name=compilation_baseline_corrected_data[plot_wavenumber].columns[plot_columnIndex_withoutIR],
 #             line=dict(color="#1f77b4"),
 #             opacity=1
 #         ))
 #         fig.add_trace(go.Scatter(
 #             x=x_mass[:],
-#             y=compilation_baseline_corrected_data[check_wavenumber].iloc[:, plot_columnIndex_withIR],
+#             y=compilation_baseline_corrected_data[plot_wavenumber].iloc[:, plot_columnIndex_withIR],
 #             mode='lines',
-#             name=compilation_baseline_corrected_data[check_wavenumber].columns[plot_columnIndex_withIR],
+#             name=compilation_baseline_corrected_data[plot_wavenumber].columns[plot_columnIndex_withIR],
 #             line=dict(color="#ff7f0e"),
 #             opacity=1
 #         ))
@@ -729,7 +729,7 @@
 #             x0=min(x_mass[baseline_range_indices]),
 #             y0=0,
 #             x1=max(x_mass[baseline_range_indices]),
-#             y1=y_max2,
+#             y1=mass_ymax,
 #             fillcolor="lightsteelblue",
 #             line=dict(color='rgba(0,0,0,0)'),
 #             opacity=0.4,
@@ -751,8 +751,8 @@
 #             name='zero Line'
 #         ))
 #         fig.update_layout(
-#             xaxis=dict(range=[x_min2, x_max2]),
-#             yaxis=dict(range=[-0.001, y_max2]),
+#             xaxis=dict(range=[mass_xmin, mass_xmax]),
+#             yaxis=dict(range=[-0.001, mass_ymax]),
 #             xaxis_title="Mass (amu)",
 #             yaxis_title="Intensity",
 #             title=complex,
@@ -772,14 +772,14 @@
 #             ax.fill_between(x_mass[list_scanwidth_isotope[index]], 0.5, color="lightgray")
 #         ax.axvline(0, color='black', label='Isotope peaks')
 #         ax.axvline(0, color='lightgray', label='scan width range')
-#         ax.plot(x_mass[:], compilation_baseline_corrected_data[check_wavenumber].iloc[:, plot_columnIndex_withoutIR],
-#                 label=compilation_baseline_corrected_data[check_wavenumber].columns[plot_columnIndex_withoutIR])
-#         ax.plot(x_mass[:], compilation_baseline_corrected_data[check_wavenumber].iloc[:, plot_columnIndex_withIR],
-#                 label=compilation_baseline_corrected_data[check_wavenumber].columns[plot_columnIndex_withIR])
+#         ax.plot(x_mass[:], compilation_baseline_corrected_data[plot_wavenumber].iloc[:, plot_columnIndex_withoutIR],
+#                 label=compilation_baseline_corrected_data[plot_wavenumber].columns[plot_columnIndex_withoutIR])
+#         ax.plot(x_mass[:], compilation_baseline_corrected_data[plot_wavenumber].iloc[:, plot_columnIndex_withIR],
+#                 label=compilation_baseline_corrected_data[plot_wavenumber].columns[plot_columnIndex_withIR])
 #         ax.fill_between(x_mass[baseline_range_indices], 0.2, color="lightsteelblue", label="baseline range")
 #         ax.hlines(0, xmin=x_mass[mass_range_indices][0], xmax=x_mass[mass_range_indices][-1], color="lime")
-#         ax.set_xlim(x_min2, x_max2)
-#         ax.set_ylim(-0.001, y_max2)
+#         ax.set_xlim(mass_xmin, mass_xmax)
+#         ax.set_ylim(-0.001, mass_ymax)
 #         ax.set_xlabel("Mass (amu)")
 #         ax.set_ylabel("Intensity")
 #         ax.legend(fontsize=5)
@@ -901,13 +901,34 @@
 import streamlit as st
 import numpy as np
 import pandas as pd
-from packages.BaselineCorrection import *
-from packages.DepletionCalculator import *
+# from packages.DepletionCalculator import *
+from packages.IR_yield_Calculator_v2 import *
 import matplotlib.pyplot as plt
 import plotly.graph_objs as go
+import configparser
 import os
 from scipy.signal import savgol_filter  # Reuse your existing smoothing function
 
+# Import variables from defaults.ini
+def load_defaults():
+    """Load default values from defaults.ini file"""
+    config = configparser.ConfigParser()
+    defaults_file = r'./.streamlit/defaults.ini'  # or provide full path
+    defaults= {}
+    if os.path.exists(defaults_file):
+        try:
+            config.read(defaults_file)
+            # Update defaults with values from file
+            defaults["depletion_ymin"] = config.getfloat('Plot Parameters', 'depletion_ymin')
+            defaults["depletion_ymax"] = config.getfloat('Plot Parameters', 'depletion_ymax')
+            defaults["ln_depletion_ymin"] = config.getfloat('Plot Parameters', 'ln_depletion_ymin')
+            defaults["ln_depletion_ymax"] = config.getfloat('Plot Parameters', 'ln_depletion_ymax')
+            defaults["scan_width"] = config.getfloat('Integration Parameters', 'scan_width')
+            defaults["save_output"] = config.getboolean('Integration Parameters', 'save_output')
+        except (configparser.Error, ValueError) as e:
+            st.warning(f"Error reading defaults.ini: {e}.")
+    return defaults
+defaults = load_defaults()
 
 # Import variables from session state
 file_directory = st.session_state.get("file_directory", None)
@@ -928,7 +949,7 @@ complex = st.session_state.get("complex", None)
 mass_complex = st.session_state.get("mass_complex", None)
 mass_range_indices = st.session_state.get("mass_range_indices", None)
 baseline_range_indices = st.session_state.get("baseline_range_indices", None)
-check_wavenumber = st.session_state.get("check_wavenumber", None)
+plot_wavenumber = st.session_state.get("plot_wavenumber", None)
 plot_columnIndex_withoutIR = st.session_state.get("plot_columnIndex_withoutIR", None)
 plot_columnIndex_withIR = st.session_state.get("plot_columnIndex_withIR", None)
 compilation_baseline_corrected_data = st.session_state.get("compilation_baseline_corrected_data", None)
@@ -956,7 +977,7 @@ complex = st.session_state.get("complex", None)
 mass_complex = st.session_state.get("mass_complex", None)
 mass_range_indices = st.session_state.get("mass_range_indices", None)
 baseline_range_indices = st.session_state.get("baseline_range_indices", None)
-check_wavenumber = st.session_state.get("check_wavenumber", None)
+plot_wavenumber = st.session_state.get("plot_wavenumber", None)
 plot_columnIndex_withoutIR = st.session_state.get("plot_columnIndex_withoutIR", None)
 plot_columnIndex_withIR = st.session_state.get("plot_columnIndex_withIR", None)
 compilation_baseline_corrected_data = st.session_state.get("compilation_baseline_corrected_data", None)
@@ -1023,7 +1044,7 @@ with st.expander("Step 2 · Mass & plot configuration", expanded=False):
             )
         )
         st.session_state["save_output"] = st.toggle(
-            "Save outputs to /output directory",
+            "Save outputs to output directory",
             value=st.session_state.get("save_output", True),
         )
 
@@ -1031,64 +1052,64 @@ with st.expander("Step 2 · Mass & plot configuration", expanded=False):
         st.session_state["plot_columnIndex_withoutIR"] = int(
             st.number_input(
                 "Column index · without IR signal",
-                value=st.session_state.get("plot_columnIndex_withoutIR", -2),
+                value=st.session_state.get("plot_columnIndex_withoutIR", None),
             )
         )
         st.session_state["plot_columnIndex_withIR"] = int(
             st.number_input(
                 "Column index · with IR signal",
-                value=st.session_state.get("plot_columnIndex_withIR", -1),
+                value=st.session_state.get("plot_columnIndex_withIR", None),
             )
         )
-        available_wavenumbers = sorted(compiled_data.keys()) if compiled_data else []
-        if available_wavenumbers:
-            default_idx = 0
-            prev_selection = st.session_state.get("check_wavenumber")
-            if prev_selection in available_wavenumbers:
-                default_idx = available_wavenumbers.index(prev_selection)
-            st.session_state["check_wavenumber"] = st.selectbox(
-                "Wavenumber to inspect",
-                options=available_wavenumbers,
-                index=default_idx,
-                format_func=lambda x: f"{x:.2f}",
-                help="Select from wavenumbers available in compiled data.",
-            )
+        # available_wavenumbers = sorted(compiled_data.keys()) if compiled_data else []
+        # if available_wavenumbers:
+        #     default_idx = 0
+        #     prev_selection = st.session_state.get("plot_wavenumber")
+        #     if prev_selection in available_wavenumbers:
+        #         default_idx = available_wavenumbers.index(prev_selection)
+        #     st.session_state["plot_wavenumber"] = st.selectbox(
+        #         "Wavenumber to inspect",
+        #         options=available_wavenumbers,
+        #         index=default_idx,
+        #         format_func=lambda x: f"{x:.2f}",
+        #         help="Select from wavenumbers available in compiled data.",
+        #     )
             
-            # Display count for selected wavenumber
-            unique_wavenumbers_df = st.session_state.get("unique_wavenumbers_df")
-            if unique_wavenumbers_df is not None:
-                selected_wn = st.session_state["check_wavenumber"]
-                matching_rows = unique_wavenumbers_df[unique_wavenumbers_df["Unique Wavenumbers"] == selected_wn]
-                if not matching_rows.empty:
-                    count = matching_rows.iloc[0]["Counts"]
-                    st.info(f"📊 Count for wavenumber {selected_wn:.2f}: **{int(count)}**")
-        else:
-            st.info(
-                "No compiled wavenumbers available yet. Run earlier steps to populate data.",
-                icon="ℹ️",
-            )
-            st.session_state["check_wavenumber"] = st.session_state.get("check_wavenumber", 0.0)
+        #     # Display count for selected wavenumber
+        #     unique_wavenumbers = st.session_state.get("unique_wavenumbers")
+        #     if unique_wavenumbers is not None:
+        #         selected_wn = st.session_state["plot_wavenumber"]
+        #         matching_rows = unique_wavenumbers[unique_wavenumbers["Unique Wavenumbers"] == selected_wn]
+        #         if not matching_rows.empty:
+        #             count = matching_rows.iloc[0]["Counts"]
+        #             st.info(f"📊 Count for wavenumber {selected_wn:.2f}: **{int(count)}**")
+        # else:
+        #     st.info(
+        #         "No compiled wavenumbers available yet. Run earlier steps to populate data.",
+        #         icon="ℹ️",
+        #     )
+        #     st.session_state["plot_wavenumber"] = st.session_state.get("plot_wavenumber", 0.0)
 
         col_axes = st.columns(3)
         with col_axes[0]:
-            st.session_state["x_min2"] = float(
+            st.session_state["mass_xmin"] = float(
                 st.text_input(
                     "Mass plot X min",
-                    value=st.session_state.get("x_min2", 0.0),
+                    value=st.session_state.get("mass_xmin", None),
                 )
             )
         with col_axes[1]:
-            st.session_state["x_max2"] = float(
+            st.session_state["mass_xmax"] = float(
                 st.text_input(
                     "Mass plot X max",
-                    value=st.session_state.get("x_max2", 1300),
+                    value=st.session_state.get("mass_xmax", None),
                 )
             )
         with col_axes[2]:
-            st.session_state["y_max2"] = float(
+            st.session_state["mass_ymax"] = float(
                 st.text_input(
                     "Mass plot Y max",
-                    value=st.session_state.get("y_max2", 0.1),
+                    value=st.session_state.get("mass_ymax", None),
                 )
             )
 
@@ -1110,13 +1131,13 @@ with st.expander("Step 3 · Depletion window & smoothing", expanded=False):
         st.session_state["depletion_ymin"] = float(
             st.text_input(
                 "Depletion y-axis min",
-                value=st.session_state.get("depletion_ymin", -0.1),
+                value=st.session_state.get("depletion_ymin", defaults.get("depletion_ymin", None)),
             )
         )
         st.session_state["depletion_ymax"] = float(
             st.text_input(
                 "Depletion y-axis max",
-                value=st.session_state.get("depletion_ymax", 1.5),
+                value=st.session_state.get("depletion_ymax", defaults.get("depletion_ymax", None)),
             )
         )
 
@@ -1124,13 +1145,13 @@ with st.expander("Step 3 · Depletion window & smoothing", expanded=False):
         st.session_state["ln_depletion_ymin"] = float(
             st.text_input(
                 "-ln(Depletion) y-axis min",
-                value=st.session_state.get("ln_depletion_ymin", -0.4),
+                value=st.session_state.get("ln_depletion_ymin", defaults.get("ln_depletion_ymin", None)),
             )
         )
         st.session_state["ln_depletion_ymax"] = float(
             st.text_input(
                 "-ln(Depletion) y-axis max",
-                value=st.session_state.get("ln_depletion_ymax", 0.3),
+                value=st.session_state.get("ln_depletion_ymax", defaults.get("ln_depletion_ymax", None)),
             )
         )
         st.session_state["data_display_option"] = st.radio(
@@ -1169,12 +1190,12 @@ if run_button:
     isotope_scan_width = st.session_state.get("isotope_scan_width", None)
     x_mass = st.session_state.get("x_mass", None)
     compilation_baseline_corrected_data = st.session_state.get("compilation_baseline_corrected_data", None)
-    check_wavenumber = st.session_state.get("check_wavenumber", None)
+    plot_wavenumber = st.session_state.get("plot_wavenumber", None)
     plot_columnIndex_withoutIR = st.session_state.get("plot_columnIndex_withoutIR", None)
     plot_columnIndex_withIR = st.session_state.get("plot_columnIndex_withIR", None)
-    x_min2 = st.session_state.get("x_min2", None)
-    x_max2 = st.session_state.get("x_max2", None)
-    y_max2 = st.session_state.get("y_max2", None)
+    mass_xmin = st.session_state.get("mass_xmin", None)
+    mass_xmax = st.session_state.get("mass_xmax", None)
+    mass_ymax = st.session_state.get("mass_ymax", None)
     save_output = st.session_state.get("save_output")
     
     depletion_ymin = st.session_state.get("depletion_ymin", None)
@@ -1183,32 +1204,32 @@ if run_button:
     ln_depletion_ymax = st.session_state.get("ln_depletion_ymax", None)
     depletion_xmin = st.session_state.get("depletion_xmin")
     depletion_xmax = st.session_state.get("depletion_xmax")
-    unique_wavenumbers_df = st.session_state.get("unique_wavenumbers_df")
+    unique_wavenumbers = st.session_state.get("unique_wavenumbers")
     
     # Calculate depletion using your class/function
-    fullrange_depletion_spectra_multi_peak = depletion(
-    mass_complex=st.session_state["list_mass_isotope"],
-    search_width=st.session_state["search_width"],
+    fullrange_depletion_spectra_multi_peak = IR_yield_Calculator(
+    mass_peaks=st.session_state["list_mass_isotope"],
     integration_width=st.session_state["isotope_scan_width"],
-    target_mass=st.session_state["x_mass"],
-    
+    mass_range = st.session_state["x_mass"],
     )
 
     
     for wavenumber in unique_wavenumbers:
         fullrange_depletion_spectra_multi_peak.wavenumber = wavenumber
-        fullrange_depletion_spectra_multi_peak.wavenumber_counts= unique_wavenumbers_df.set_index("Unique Wavenumbers").at[wavenumber, "Counts"]
+        # fullrange_depletion_spectra_multi_peak.wavenumber_counts= unique_wavenumbers.set_index("Unique Wavenumbers").at[wavenumber, "Counts"]
         fullrange_depletion_spectra_multi_peak.column_withoutIR = compilation_baseline_corrected_data[wavenumber].columns[-2]
         fullrange_depletion_spectra_multi_peak.column_withIR = compilation_baseline_corrected_data[wavenumber].columns[-1]
         fullrange_depletion_spectra_multi_peak.data_withoutIR = compilation_baseline_corrected_data[wavenumber].iloc[:, -2]
         fullrange_depletion_spectra_multi_peak.data_withIR = compilation_baseline_corrected_data[wavenumber].iloc[:, -1]
-        fullrange_depletion_data = fullrange_depletion_spectra_multi_peak.make_depletion_spectra_multi_peak()
+        fullrange_depletion_data = fullrange_depletion_spectra_multi_peak.make_IR_yield_spectra()
         orig_fullrange_data = fullrange_depletion_data.copy()
     
-    list_mass_isotope = fullrange_depletion_spectra_multi_peak.list_mass_isotope
-    list_scanwidth_isotope = fullrange_depletion_spectra_multi_peak.list_scanwidth_isotope
+    list_mass_isotope = fullrange_depletion_spectra_multi_peak.isotope_mass_peaks
+    list_scanwidth_isotope = fullrange_depletion_spectra_multi_peak.isotope_scanwidths
     st.session_state.fullrange_depletion_data = fullrange_depletion_data
     st.session_state.analysis_done = True
+
+
     # Convert to numpy array for plotting.
     # Only show the analysis tabs if analysis is done.
     if st.session_state.get("analysis_done"):
@@ -1275,20 +1296,15 @@ if run_button:
     ln_depletion_ymin = st.session_state["ln_depletion_ymin"]
     ln_depletion_ymax = st.session_state["ln_depletion_ymax"]
     st.write(fullrange_depletion_data)
+
     if save_output:
-        csv_filename = f"{file_directory}/output/fullrange_depletion_data_{complex}_{int(data[-1,0])}-{int(data[0,0])}.csv"
-        fullrange_depletion_data.to_csv(csv_filename, index=False)
-        st.write(f"CSV output saved @ {csv_filename}")
-    else:
-        st.write("Note: save output is currently off.")
-    if save_output:
-        fn = (
-            f"{file_directory}/output/"
-            f"fullrange_depletion_both_{complex}_"
-            f"{int(data[-1,0])}-{int(data[0,0])}.csv"
-        )
-        export_df.to_csv(fn, index=False)
-        st.success(f"Original + smoothed data saved @ {fn}")
+        filename_fullrange_depletion = f"fullrange_depletion_data_{complex}_{int(data[0,0])}-{int(data[-1,0])}cm⁻¹.csv"
+        filename_fullrange_depletion_both = f"fullrange_depletion_both_{complex}_{int(data[0,0])}-{int(data[-1,0])}cm⁻¹.csv"
+        export_filename_fullrange_depletion = os.path.join(file_directory, filename_fullrange_depletion)
+        export_filename_fullrange_depletion_both = os.path.join(file_directory, filename_fullrange_depletion_both)
+        fullrange_depletion_data.to_csv(export_filename_fullrange_depletion, index=False)
+        export_df.to_csv(export_filename_fullrange_depletion_both, index=False)
+        st.success(f"Original + smoothed data saved @ {export_filename_fullrange_depletion_both}")
     else:
         st.info("Save output is off; combined CSV not written.")
     x_range_dep = [st.session_state["depletion_xmin"], st.session_state["depletion_xmax"]]
@@ -1308,7 +1324,7 @@ if run_button:
         fig = go.Figure()
         fig.add_trace(go.Scatter(
             x=[mass_complex, mass_complex],
-            y=[-0.001, y_max2],
+            y=[-0.001, mass_ymax],
             mode='lines',
             line=dict(color="green", width=2, dash="solid"),
             name=f"{complex} average mass"
@@ -1316,7 +1332,7 @@ if run_button:
         for index, isotope in enumerate(list_mass_isotope):
             fig.add_trace(go.Scatter(
                 x=[isotope, isotope],
-                y=[0, y_max2],
+                y=[0, mass_ymax],
                 mode='lines',
                 line=dict(color='black', width=2),
                 showlegend=False
@@ -1326,7 +1342,7 @@ if run_button:
                 x0=isotope - isotope_scan_width,
                 x1=isotope + isotope_scan_width,
                 y0=0,
-                y1=y_max2,
+                y1=mass_ymax,
                 fillcolor='lightgray',
                 line=dict(color='rgba(0,0,0,0)'),
                 opacity=0.4,
@@ -1348,16 +1364,16 @@ if run_button:
         ))
         fig.add_trace(go.Scatter(
             x=x_mass[:],
-            y=compilation_baseline_corrected_data[check_wavenumber].iloc[:, plot_columnIndex_withoutIR],
+            y=compilation_baseline_corrected_data[plot_wavenumber].iloc[:, plot_columnIndex_withoutIR],
             mode='lines',
-            name=compilation_baseline_corrected_data[check_wavenumber].columns[plot_columnIndex_withoutIR],
+            name=compilation_baseline_corrected_data[plot_wavenumber].columns[plot_columnIndex_withoutIR],
             line=dict(color="#1f77b4")
         ))
         fig.add_trace(go.Scatter(
             x=x_mass[:],
-            y=compilation_baseline_corrected_data[check_wavenumber].iloc[:, plot_columnIndex_withIR],
+            y=compilation_baseline_corrected_data[plot_wavenumber].iloc[:, plot_columnIndex_withIR],
             mode='lines',
-            name=compilation_baseline_corrected_data[check_wavenumber].columns[plot_columnIndex_withIR],
+            name=compilation_baseline_corrected_data[plot_wavenumber].columns[plot_columnIndex_withIR],
             line=dict(color="#ff7f0e")
         ))
         fig.add_shape(
@@ -1365,7 +1381,7 @@ if run_button:
             x0=min(x_mass[baseline_range_indices]),
             y0=0,
             x1=max(x_mass[baseline_range_indices]),
-            y1=y_max2,
+            y1=mass_ymax,
             fillcolor="lightsteelblue",
             line=dict(color='rgba(0,0,0,0)'),
             opacity=0.4,
@@ -1386,8 +1402,8 @@ if run_button:
             name='zero Line'
         ))
         fig.update_layout(
-            xaxis=dict(range=[x_min2, x_max2]),
-            yaxis=dict(range=[-0.001, y_max2]),
+            xaxis=dict(range=[mass_xmin, mass_xmax]),
+            yaxis=dict(range=[-0.001, mass_ymax]),
             xaxis_title="Mass (amu)",
             yaxis_title="Intensity",
             title=complex,
@@ -1395,9 +1411,10 @@ if run_button:
         )
         st.plotly_chart(fig)
         if save_output:
-            html_filename = f"{file_directory}/output/mass_spectra_{complex}_{int(data[-1,0])}-{int(data[0,0])}.html"
-            fig.write_html(html_filename, include_plotlyjs='cdn')
-            st.write(f"Interactive Mass Spectra plot saved as HTML @ {html_filename}")
+            html_filename = f"mass_spectra_{complex}_{int(data[0,0])}-{int(data[-1,0])}.html"
+            output_html_filename = os.path.join(file_directory, html_filename)
+            fig.write_html(output_html_filename, include_plotlyjs='cdn')
+            st.write(f"Interactive Mass Spectra plot saved as HTML @ {output_html_filename}")
         
         st.markdown("###### *:green[Static plot with matplotlib]*")
         fig_static, ax = plt.subplots(figsize=(5, 3))
@@ -1407,21 +1424,22 @@ if run_button:
             ax.fill_between(x_mass[list_scanwidth_isotope[index]], 0.5, color="lightgray")
         ax.axvline(0, color='black', label='Isotope peaks')
         ax.axvline(0, color='lightgray', label='scan width range')
-        ax.plot(x_mass[:], compilation_baseline_corrected_data[check_wavenumber].iloc[:, plot_columnIndex_withoutIR],
-                label=compilation_baseline_corrected_data[check_wavenumber].columns[plot_columnIndex_withoutIR])
-        ax.plot(x_mass[:], compilation_baseline_corrected_data[check_wavenumber].iloc[:, plot_columnIndex_withIR],
-                label=compilation_baseline_corrected_data[check_wavenumber].columns[plot_columnIndex_withIR])
+        ax.plot(x_mass[:], compilation_baseline_corrected_data[plot_wavenumber].iloc[:, plot_columnIndex_withoutIR],
+                label=compilation_baseline_corrected_data[plot_wavenumber].columns[plot_columnIndex_withoutIR])
+        ax.plot(x_mass[:], compilation_baseline_corrected_data[plot_wavenumber].iloc[:, plot_columnIndex_withIR],
+                label=compilation_baseline_corrected_data[plot_wavenumber].columns[plot_columnIndex_withIR])
         ax.fill_between(x_mass[baseline_range_indices], 0.2, color="lightsteelblue", label="baseline range")
         ax.hlines(0, xmin=x_mass[mass_range_indices][0], xmax=x_mass[mass_range_indices][-1], color="lime")
-        ax.set_xlim(x_min2, x_max2)
-        ax.set_ylim(-0.001, y_max2)
+        ax.set_xlim(mass_xmin, mass_xmax)
+        ax.set_ylim(-0.001, mass_ymax)
         ax.set_xlabel("Mass (amu)")
         ax.set_ylabel("Intensity")
         ax.legend(fontsize=5)
         fig_static.tight_layout()
         st.pyplot(fig_static)
         if save_output:
-            fig_static.savefig(f"{file_directory}/output/mass_spectra_{complex}_{int(data[-1,0])}-{int(data[0,0])}.png", dpi=300)
+            output_png_filename = os.path.join(file_directory, f"mass_spectra_{complex}_{int(data[0,0])}-{int(data[-1,0])}.png")
+            fig_static.savefig(output_png_filename, dpi=300)
     
     # ---------- Tab 2: Depletion Plot ----------
     with tab2:
@@ -1451,9 +1469,10 @@ if run_button:
         )
         st.plotly_chart(fig_dep)
         if save_output:
-            html_filename = f"{file_directory}/output/depletion_{complex}_{int(data[-1,0])}-{int(data[0,0])}.html"
-            fig_dep.write_html(html_filename, include_plotlyjs='cdn')
-            st.write(f"Interactive Depletion plot saved as HTML @ {html_filename}")
+            html_filename = f"depletion_{complex}_{int(data[0,0])}-{int(data[-1,0])}.html"
+            output_html_filename = os.path.join(file_directory, html_filename)
+            fig_dep.write_html(output_html_filename, include_plotlyjs='cdn')
+            st.write(f"Interactive Depletion plot saved as HTML @ {output_html_filename}")
         
         st.markdown("###### *:green[Static plot with matplotlib]*")
         fig_dep_static, ax = plt.subplots(figsize=(21, 6))
@@ -1472,7 +1491,8 @@ if run_button:
         ax.set_xlabel("wavenumber (cm-1)")
         st.pyplot(fig_dep_static)
         if save_output:
-            fig_dep_static.savefig(f"{file_directory}/output/depletion_{complex}_{int(data[-1,0])}-{int(data[0,0])}.png", dpi=300)
+            output_png_filename = os.path.join(file_directory, f"depletion_{complex}_{int(data[0,0])}-{int(data[-1,0])}.png")
+            fig_dep_static.savefig(output_png_filename, dpi=300)
     
     # ---------- Tab 3: -ln(Depletion) Plot ----------
     with tab3:
@@ -1502,9 +1522,10 @@ if run_button:
         )
         st.plotly_chart(fig_ln)
         if save_output:
-            html_filename = f"{file_directory}/output/ln_depletion_{complex}_{int(data[-1,0])}-{int(data[0,0])}.html"
-            fig_ln.write_html(html_filename, include_plotlyjs='cdn')
-            st.write(f"Interactive -ln(Depletion) plot saved as HTML @ {html_filename}")
+            html_filename = f"ln_depletion_{complex}_{int(data[0,0])}-{int(data[-1,0])}.html"
+            output_html_filename = os.path.join(file_directory, html_filename)
+            fig_ln.write_html(output_html_filename, include_plotlyjs='cdn')
+            st.write(f"Interactive -ln(Depletion) plot saved as HTML @ {output_html_filename}")
         
         st.markdown("###### *:green[Static plot with matplotlib]*")
         fig_ln_static, ax = plt.subplots(figsize=(21, 6))
@@ -1523,7 +1544,8 @@ if run_button:
         ax.set_xlabel("wavenumber (cm-1)")
         st.pyplot(fig_ln_static)
         if save_output:
-            fig_ln_static.savefig(f"{file_directory}/output/ln_depletion_{complex}_{int(data[-1,0])}-{int(data[0,0])}.png", dpi=300)
+            output_png_filename = os.path.join(file_directory, f"ln_depletion_{complex}_{int(data[0,0])}-{int(data[-1,0])}.png")
+            fig_ln_static.savefig(output_png_filename, dpi=300)
     
     # ---------- Tab 4: PAH Comparison ----------
     with tab4:
