@@ -5,7 +5,7 @@ __all__ = ['IR_yield_Calculator']
 
 class IR_yield_Calculator:
 
-    def __init__(self, mass_peaks=None, integration_width=None, wavenumber=None, column_withoutIR=None, 
+    def __init__(self, mass_peaks=None, integration_width=None, search_width=None, wavenumber=None, column_withoutIR=None, 
                 column_withIR=None, data_withoutIR=None, data_withIR=None, mass_range=None):
         """
         Initialize the IR yield calculator for mass spectrometry photodissociation analysis.
@@ -19,9 +19,12 @@ class IR_yield_Calculator:
             mass_peaks (list or float, optional): Theoretical mass values in amu of target molecular
                                                 complexes. Can be a single mass or list of masses
                                                 for isotopic analysis. Default: None.
-            integration_width (float, optional): Half-width of the mass range window in amu for peak analysis.
-                                        Creates a symmetric window of ±integration_width around target masses.
-                                        Typical values: 1-10 amu. Default: None.
+            integration_width (float, optional): Half-width of the mass range window in amu for signal integration.
+                                        Creates a symmetric window of ±integration_width around refined peak positions.
+                                        Typical values: 0.5-2 amu. Default: None.
+            search_width (float, optional): Half-width of the mass range window in amu for peak finding.
+                                        A larger window used to locate the actual peak position before integration.
+                                        If None, defaults to integration_width. Typical values: 1-5 amu. Default: None.
             wavenumber (float, optional): Current IR wavenumber in cm⁻¹ being analyzed.
                                         Used for organizing spectral data. Default: None.
             column_withoutIR (str, optional): Column identifier for data without IR radiation.
@@ -92,7 +95,9 @@ class IR_yield_Calculator:
         
         # Core analysis parameters
         self.mass_peaks = mass_peaks           # Target molecular mass(es) for analysis (amu)
-        self.integration_width = integration_width           # Half-width of mass analysis window (amu)
+        self.integration_width = integration_width           # Half-width of mass integration window (amu)
+        # If no separate search_width is given, default to integration_width
+        self.search_width = search_width if search_width is not None else integration_width
         self.wavenumber = wavenumber           # Current IR wavenumber identifier (cm⁻¹)
         
         # Data organization identifiers
@@ -138,21 +143,23 @@ class IR_yield_Calculator:
 
 
 
-    def scanwidth_range(self, mass_input):
+    def scanwidth_range(self, mass_input, width=None):
         """
         Calculate the scan width range indices for mass spectrometry peak analysis.
         
         This method defines a mass range window centered on a target mass value using
-        the predefined scan width. It finds all data points within this range for
+        the specified width. It finds all data points within this range for
         subsequent peak analysis and signal integration.
         
         The scan width range is calculated as:
-        - scanwidth_min = mass_input - self.integration_width
-        - scanwidth_max = mass_input + self.integration_width
+        - scanwidth_min = mass_input - width
+        - scanwidth_max = mass_input + width
         
         Args:
             mass_input (float): Target mass value in amu around which to define the scan width range.
                             This is typically the theoretical or expected mass of a molecular complex.
+            width (float, optional): Half-width of the mass range window in amu.
+                            If None, defaults to self.integration_width.
         
         Returns:
             np.ndarray: Array of indices where the mass values in self.mass_range fall within
@@ -179,14 +186,12 @@ class IR_yield_Calculator:
             >>> indices = calculator.scanwidth_range(150.0)
             >>> # indices contains array positions where mass_axis values are between 148-152
         """
-        scanwidth_min = 0
-        scanwidth_max = 0
-        mass_isotope = 0
-        
-        mass_isotope = mass_input
-        
-        scanwidth_min = mass_isotope - self.integration_width
-        scanwidth_max = mass_isotope + self.integration_width
+        # Use provided width or default to integration_width
+        if width is None:
+            width = self.integration_width
+            
+        scanwidth_min = mass_input - width
+        scanwidth_max = mass_input + width
         
         self.scanwidth_range_indices = np.where((self.mass_range >= scanwidth_min)&(self.mass_range <=scanwidth_max))[0]
         
@@ -258,9 +263,9 @@ class IR_yield_Calculator:
             else:
                 mass_input = self.mass_peaks
         
-        # Step 2: Define initial scan width range around the input mass
-        # This creates a mass window for peak detection analysis
-        self.scanwidth_range(mass_input)
+        # Step 2: Define initial search range around the input mass using search_width
+        # This creates a larger mass window for peak detection/finding
+        self.scanwidth_range(mass_input, width=self.search_width)
 
         # Step 3: Initialize variables for peak detection analysis
         # These will store mass values and signal intensities within the scan range
@@ -295,8 +300,8 @@ class IR_yield_Calculator:
         New_MassPeak = self.refined_mass_peak
 
         # Recalculate scan width range centered on the refined peak position
-        # This ensures subsequent analysis uses the most accurate mass position
-        New_ScanWidth = self.scanwidth_range(New_MassPeak)
+        # Now use integration_width (smaller) for the final integration range
+        New_ScanWidth = self.scanwidth_range(New_MassPeak, width=self.integration_width)
 
         # Step 8: Extract final signal data using refined scan range
         # Get signal data for both IR conditions within the updated scan range
