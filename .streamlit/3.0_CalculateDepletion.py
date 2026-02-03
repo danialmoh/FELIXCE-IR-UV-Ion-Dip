@@ -1210,6 +1210,7 @@ if run_button:
     fullrange_depletion_spectra_multi_peak = IR_yield_Calculator(
     mass_peaks=st.session_state["list_mass_isotope"],
     integration_width=st.session_state["isotope_scan_width"],
+    search_width=st.session_state["search_width"],
     mass_range = st.session_state["x_mass"],
     )
 
@@ -1229,6 +1230,33 @@ if run_button:
     st.session_state.fullrange_depletion_data = fullrange_depletion_data
     st.session_state.analysis_done = True
 
+    # --- Analysis Parameters Report ---
+    with st.expander("📊 Analysis Parameters Report", expanded=False):
+        col_params, col_peaks = st.columns(2)
+        with col_params:
+            st.markdown("##### Width Parameters")
+            st.markdown(f"""
+            | Parameter | Value | Description |
+            |-----------|-------|-------------|
+            | **Search Width** | ±{st.session_state.get('search_width', 'N/A')} amu | Window for finding peak maxima |
+            | **Integration Width** | ±{st.session_state.get('isotope_scan_width', 'N/A')} amu | Window for signal integration |
+            """)
+        with col_peaks:
+            st.markdown("##### Refined Peak Positions")
+            peak_data = []
+            for i, (mass, scanwidth_idx) in enumerate(zip(list_mass_isotope, list_scanwidth_isotope)):
+                mass_range = st.session_state.get("x_mass")
+                if mass_range is not None and len(scanwidth_idx) > 0:
+                    integration_range = f"{mass_range[scanwidth_idx[0]]:.2f} – {mass_range[scanwidth_idx[-1]]:.2f}"
+                else:
+                    integration_range = "N/A"
+                peak_data.append({
+                    "Isotope": i + 1,
+                    "Theoretical Mass": f"{st.session_state['list_mass_isotope'][i]:.2f} amu",
+                    "Refined Peak": f"{mass:.2f} amu",
+                    "Integration Range": integration_range
+                })
+            st.dataframe(pd.DataFrame(peak_data), hide_index=True)
 
     # Convert to numpy array for plotting.
     # Only show the analysis tabs if analysis is done.
