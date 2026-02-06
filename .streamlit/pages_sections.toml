@@ -100,3 +100,23 @@ icon = "⚖️"
 path = ".streamlit/7.0_LaserNormalization.py"
 name = "7.0 Laser Normalization"
 icon = "✨"
+
+[[pages]]
+path = ".streamlit/8.0_REMPI_ImportData.py"
+name = "8.0 REMPI Import Data"
+icon = "🔬"
+
+[[pages]]
+path = ".streamlit/8.1_REMPI_Wavelengths.py"
+name = "8.1 REMPI Wavelengths per file"
+icon = "📊"
+
+[[pages]]
+path = ".streamlit/8.2_REMPI_UniqueWavelengths.py"
+name = "8.2 REMPI Unique Wavelengths"
+icon = "🔍"
+
+[[pages]]
+path = ".streamlit/8.3_REMPI_BaselineCorrection.py"
+name = "8.3 REMPI Parameters & Baseline"
+icon = "📐"

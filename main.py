@@ -124,6 +124,18 @@ with st.sidebar:
         st.markdown("#### ✨ Advanced")
         if st.button("✨ 7.0 Laser Normalization", use_container_width=True, key="btn_laser_adv"):
             st.switch_page(".streamlit/7.0_LaserNormalization.py")
+    
+    # Section 8: REMPI
+    with st.container(border=True):
+        st.markdown("#### 🔬 REMPI (UV-only)")
+        if st.button("🔬 8.0 REMPI Import Data", use_container_width=True, key="btn_rempi_import"):
+            st.switch_page(".streamlit/8.0_REMPI_ImportData.py")
+        if st.button("📊 8.1 REMPI Wavelengths per file", use_container_width=True, key="btn_rempi_wl"):
+            st.switch_page(".streamlit/8.1_REMPI_Wavelengths.py")
+        if st.button("🔍 8.2 REMPI Unique Wavelengths", use_container_width=True, key="btn_rempi_unique"):
+            st.switch_page(".streamlit/8.2_REMPI_UniqueWavelengths.py")
+        if st.button("📐 8.3 REMPI Parameters & Baseline", use_container_width=True, key="btn_rempi_baseline"):
+            st.switch_page(".streamlit/8.3_REMPI_BaselineCorrection.py")
 
 # Load sections
 nav = get_nav_from_toml(".streamlit/pages_sections.toml")
