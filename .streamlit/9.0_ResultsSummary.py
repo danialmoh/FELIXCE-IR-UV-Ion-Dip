@@ -481,7 +481,7 @@ def create_pdf_report(plots_dir, params_ir, params_rempi):
     # Title page
     pdf.add_page()
     pdf.set_font('Helvetica', 'B', 24)
-    pdf.cell(0, 20, 'FELIX Data Analysis Report', ln=True, align='C')
+    pdf.cell(0, 20, 'FELIXCE Data Analysis Report', ln=True, align='C')
     pdf.set_font('Helvetica', '', 12)
     pdf.cell(0, 10, f'Generated: {analysis_date} at {analysis_time}', ln=True, align='C')
     pdf.ln(20)
@@ -687,7 +687,7 @@ if st.button("📄 Generate & Download Report (PDF)", use_container_width=True, 
                     pdf_buffer.seek(0)
                     
                     complex_name = st.session_state.get('complex', 'Analysis')
-                    pdf_filename = f"FELIX_Report_{complex_name}_{analysis_date.replace('-', '')}.pdf"
+                    pdf_filename = f"FELIXCE_Report_{complex_name}_{analysis_date.replace('-', '')}.pdf"
                     
                     st.success("✅ PDF report generated successfully!")
                     
