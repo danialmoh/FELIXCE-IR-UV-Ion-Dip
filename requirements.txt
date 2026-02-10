@@ -10,4 +10,4 @@ pybaselines
 fpdf2
 palettable
 rdkit
-amespahdbpythonsuite
+# amespahdbpythonsuite
