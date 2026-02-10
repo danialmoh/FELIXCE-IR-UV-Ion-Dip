@@ -1,7 +1,12 @@
 import streamlit as st
 import pandas as pd
-from rdkit import Chem
-from rdkit.Chem import AllChem, Draw, Descriptors
+
+try:
+    from rdkit import Chem
+    from rdkit.Chem import AllChem, Draw, Descriptors
+    HAS_RDKIT = True
+except ImportError:
+    HAS_RDKIT = False
 
 # Extended mechanism rules including additional pathways.
 mechanism_rules = {
@@ -128,6 +133,10 @@ mechanism_df = pd.DataFrame(mechanism_data)
 # --- Streamlit UI ---
 
 st.title("Multi-Step PAH Formation Simulator – Extended Mechanisms")
+
+if not HAS_RDKIT:
+    st.error("This page requires `rdkit`. Install with: `pip install rdkit`")
+    st.stop()
 
 # Display the Reaction Mechanisms Summary Table.
 st.header("Reaction Mechanisms Summary")

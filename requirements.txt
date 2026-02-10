@@ -9,5 +9,6 @@ h5py
 pybaselines
 fpdf2
 palettable
-rdkit
+# Optional: uncomment locally if needed
+# rdkit
 # amespahdbpythonsuite

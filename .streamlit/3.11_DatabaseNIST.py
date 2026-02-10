@@ -4,7 +4,11 @@ import numpy as np
 import pandas as pd
 from scipy.signal import savgol_filter
 import plotly.graph_objs as go
-from amespahdbpythonsuite.amespahdb import AmesPAHdb
+try:
+    from amespahdbpythonsuite.amespahdb import AmesPAHdb
+    HAS_PAHDB = True
+except ImportError:
+    HAS_PAHDB = False
 
 st.title("Custom Spectrum")
 
@@ -99,6 +103,9 @@ if st.checkbox("Overlay theoretical from AmesPAHdb", value=False):
         conv = st.selectbox("Convolution", ["Gaussian","Lorentzian"])
         fwhm = st.number_input("FWHM", 15.0)
         if st.button("Load theory"):
+          if not HAS_PAHDB:
+            st.error("AmesPAHdb is not installed. Install with: `pip install amespahdbpythonsuite`")
+          else:
             try:
                 pahdb = AmesPAHdb(filename=xml_path, check=False, cache=True)
                 uid = int(uid_input)

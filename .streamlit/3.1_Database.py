@@ -1,15 +1,15 @@
-import sys
-import streamlit as st
-
-st.write("Python executable:", sys.executable)
-st.write("Python path:", sys.path)
 import streamlit as st
 import numpy as np
 import pandas as pd
 import plotly.graph_objs as go
-from amespahdbpythonsuite.amespahdb import AmesPAHdb
 from scipy.signal import savgol_filter
 import matplotlib.pyplot as plt
+
+try:
+    from amespahdbpythonsuite.amespahdb import AmesPAHdb
+    HAS_PAHDB = True
+except ImportError:
+    HAS_PAHDB = False
 
 
 st.title("PAH Comparison: Experimental vs. Theoretical IR Spectrum")
@@ -142,7 +142,9 @@ with st.form("theory_form"):
     submitted = st.form_submit_button("Load Theoretical Spectrum")
 
 theory_df = None  # Initialize theory_df to None
-if submitted:
+if submitted and not HAS_PAHDB:
+    st.error("AmesPAHdb is not installed. Install with: `pip install amespahdbpythonsuite`")
+if submitted and HAS_PAHDB:
     try:
         # Create the database instance (with caching and without online check)
         pahdb = AmesPAHdb(filename=xml_path, check=False, cache=True)
