@@ -120,3 +120,8 @@ icon = "🔍"
 path = ".streamlit/8.3_REMPI_BaselineCorrection.py"
 name = "8.3 REMPI Parameters & Baseline"
 icon = "📐"
+
+[[pages]]
+path = ".streamlit/9.0_ResultsSummary.py"
+name = "9. Results Summary & Export"
+icon = "📋"

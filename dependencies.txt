@@ -3,3 +3,4 @@ streamlit-1.39.0
 h5py
 plotly
 pybaselines
+fpdf2

@@ -72,6 +72,9 @@ from packages.FELIX_HDF5_ProcessData import *
 from packages.BaselineCorrection import *   
 import matplotlib.pyplot as plt
 import plotly.graph_objs as go
+from packages.ReportManager import add_plot_to_report_button, init_report_session
+
+init_report_session()
 
 # Import variables
 file_directory = st.session_state.get("file_directory", None)

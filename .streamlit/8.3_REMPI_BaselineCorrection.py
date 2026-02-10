@@ -20,6 +20,9 @@ import os
 from pathlib import Path
 
 from packages.BaselineCorrection_REMPI import baseline_REMPI
+from packages.ReportManager import add_plot_to_report_button, init_report_session
+
+init_report_session()
 
 # Import variables from defaults.ini
 def load_defaults():
@@ -329,6 +332,15 @@ with col3:
             
             plt.tight_layout()
             st.pyplot(fig_mpl)
+            
+            # Add to Report button
+            add_plot_to_report_button(
+                fig_mpl, 
+                f"REMPI Baseline Correction - {plot_wavelength} nm",
+                key_suffix=f"rempi_bc_{plot_wavelength}",
+                description=f"REMPI baseline correction for wavelength {plot_wavelength} nm"
+            )
+            
             plt.close(fig_mpl)
         
         st.success(f"✅ Parameters registered! Baseline mean: {mean_value:.6f}")

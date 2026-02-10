@@ -7,6 +7,9 @@ import configparser
 import os
 from packages.BaselineCorrection_v2 import *
 from packages.utils import require_state
+from packages.ReportManager import add_plot_to_report_button, init_report_session
+
+init_report_session()
 
 if not require_state(
     [

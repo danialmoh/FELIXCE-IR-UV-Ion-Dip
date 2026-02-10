@@ -6,6 +6,9 @@ import matplotlib.pyplot as plt
 import plotly.graph_objs as go
 import os
 import re
+from packages.ReportManager import add_plot_to_report_button, init_report_session
+
+init_report_session()
 
 st.markdown("# 🔬 Peak Detection and Candidate Formula Matching")
 st.markdown(
@@ -605,6 +608,14 @@ with st.expander("📊 Step 3: Visualization & Plotting", expanded=False):
                 st.success(f"✅ Figure saved as '{filename}'")
                 
                 st.pyplot(fig)
+                
+                # Add to Report button
+                add_plot_to_report_button(
+                    fig,
+                    f"Peak Detection - {x_min:.0f}-{x_max:.0f} amu",
+                    key_suffix="peak_detection",
+                    description=f"Peak detection spectrum from {x_min:.0f} to {x_max:.0f} amu"
+                )
     
     with tab2:
         if st.button("Generate Interactive Plot", use_container_width=True, key="interactive_plot_btn"):

@@ -908,6 +908,9 @@ import plotly.graph_objs as go
 import configparser
 import os
 from scipy.signal import savgol_filter  # Reuse your existing smoothing function
+from packages.ReportManager import add_plot_to_report_button, init_report_session
+
+init_report_session()
 
 # Import variables from defaults.ini
 def load_defaults():
@@ -1465,6 +1468,15 @@ if run_button:
         ax.legend(fontsize=5)
         fig_static.tight_layout()
         st.pyplot(fig_static)
+        
+        # Add to Report button
+        add_plot_to_report_button(
+            fig_static,
+            f"Mass Spectra - {plot_wavenumber} cm-1",
+            key_suffix=f"mass_{plot_wavenumber}",
+            description=f"Mass spectra at wavenumber {plot_wavenumber} cm⁻¹"
+        )
+        
         if save_output:
             output_png_filename = os.path.join(file_directory, f"mass_spectra_{complex}_{int(data[0,0])}-{int(data[-1,0])}.png")
             fig_static.savefig(output_png_filename, dpi=300)
@@ -1518,6 +1530,15 @@ if run_button:
         ax.set_xlim(depletion_xmin, depletion_xmax)
         ax.set_xlabel("wavenumber (cm-1)")
         st.pyplot(fig_dep_static)
+        
+        # Add to Report button
+        add_plot_to_report_button(
+            fig_dep_static,
+            f"Depletion Full Range - {complex}",
+            key_suffix="depletion_full",
+            description=f"Depletion spectrum full range for {complex}"
+        )
+        
         if save_output:
             output_png_filename = os.path.join(file_directory, f"depletion_{complex}_{int(data[0,0])}-{int(data[-1,0])}.png")
             fig_dep_static.savefig(output_png_filename, dpi=300)
@@ -1571,6 +1592,15 @@ if run_button:
         ax.set_xlim(depletion_xmin, depletion_xmax)
         ax.set_xlabel("wavenumber (cm-1)")
         st.pyplot(fig_ln_static)
+        
+        # Add to Report button
+        add_plot_to_report_button(
+            fig_ln_static,
+            f"-ln(Depletion) Full Range - {complex}",
+            key_suffix="ln_depletion_full",
+            description=f"-ln(Depletion) spectrum full range for {complex}"
+        )
+        
         if save_output:
             output_png_filename = os.path.join(file_directory, f"ln_depletion_{complex}_{int(data[0,0])}-{int(data[-1,0])}.png")
             fig_ln_static.savefig(output_png_filename, dpi=300)
@@ -1710,3 +1740,11 @@ if run_button:
         ax2.legend()
         fig2.tight_layout()
         st.pyplot(fig2)
+        
+        # Add to Report button
+        add_plot_to_report_button(
+            fig2,
+            f"Intensity vs Wavenumber - {mass_label_str}",
+            key_suffix="intensity_vs_wn",
+            description=f"Integrated intensity vs wavenumber for mass {mass_label_str}"
+        )

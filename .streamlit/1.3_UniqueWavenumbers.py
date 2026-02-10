@@ -10,9 +10,21 @@ if "file_directory" in st.session_state:
 st.markdown("##### Drop wavenumbers with counts ≤")
 wavenumber_min_count = st.number_input("Drop wavenumbers with counts below and including:", label_visibility="collapsed", value=0, min_value=0)
 if st.button("Apply count filter"):
+    # Get total count before filtering
+    total_before = len(raw_data.unique_wavenumbers) if hasattr(raw_data, 'unique_wavenumbers') and raw_data.unique_wavenumbers is not None else None
+    
     unique_wavenumbers = raw_data.visualize_imported_unique_wavenumbers(wavenumber_min_count)
     st.session_state["unique_wavenumbers"] = unique_wavenumbers
-    st.success(f"Dropped wavenumbers with counts ≤ {wavenumber_min_count} 💧.")
+    
+    # Track how many were dropped
+    if total_before is not None:
+        neglected = total_before - len(unique_wavenumbers)
+    else:
+        neglected = 0
+    st.session_state["neglected_wavenumbers_count"] = neglected
+    st.session_state["wavenumber_min_count_filter"] = wavenumber_min_count
+    
+    st.success(f"Dropped {neglected} wavenumbers with counts ≤ {wavenumber_min_count} 💧.")
 
 
     

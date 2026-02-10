@@ -10,6 +10,9 @@ from packages.BaselineCorrection_v2 import *
 # from packages.BaselineCorrection import mass_range, baseline_new
 
 from packages.utils import require_state
+from packages.ReportManager import add_plot_to_report_button, init_report_session
+
+init_report_session()
 
 if not require_state(
     [
@@ -369,4 +372,13 @@ if st.button("✨ Register parameters and make plot!"):
         plt.tight_layout()
         
         st.pyplot(fig)
+        
+        # Add to Report button
+        add_plot_to_report_button(
+            fig, 
+            f"Baseline Correction - {plot_wavenumber} cm-1",
+            key_suffix=f"bc_{plot_wavenumber}",
+            description=f"Baseline correction for wavenumber {plot_wavenumber} cm⁻¹"
+        )
+        
         plt.close(fig)

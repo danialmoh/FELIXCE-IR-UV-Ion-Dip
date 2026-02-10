@@ -136,6 +136,12 @@ with st.sidebar:
             st.switch_page(".streamlit/8.2_REMPI_UniqueWavelengths.py")
         if st.button("📐 8.3 REMPI Parameters & Baseline", use_container_width=True, key="btn_rempi_baseline"):
             st.switch_page(".streamlit/8.3_REMPI_BaselineCorrection.py")
+    
+    # Section 9: Results Summary
+    with st.container(border=True):
+        st.markdown("#### 📋 Results & Export")
+        if st.button("📋 9.0 Results Summary & Export", use_container_width=True, key="btn_results_summary"):
+            st.switch_page(".streamlit/9.0_ResultsSummary.py")
 
 # Load sections
 nav = get_nav_from_toml(".streamlit/pages_sections.toml")
