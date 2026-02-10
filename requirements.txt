@@ -1,0 +1,13 @@
+streamlit>=1.39.0
+st-pages>=1.0.1
+numpy
+pandas
+matplotlib
+plotly
+scipy
+h5py
+pybaselines
+fpdf2
+palettable
+rdkit
+amespahdbpythonsuite
