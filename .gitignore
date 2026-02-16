@@ -1,14 +1,29 @@
+# Python
 __pycache__/
+.venv/
+*.pyc
+
+# macOS
+.DS_Store
+
+# Data files
+*.csv
+*.db
+
+# Input/output directories
 input/*
 !input/.gitkeep
 output/*
 !output/.gitkeep
-AmesPAHdbPythonSuite/
-#I add this because this python suit is connected to my code however git tracks it as a directory, so I need to ignore it
-# *.png
-*.csv
-output/
+
+# Example data and figures
 DATA_IR-UV-Ion-Dip_Example/
 DATA_FELICE_example/
 Figures/
-.venv/
+
+# External dependencies
+AmesPAHdbPythonSuite/
+
+# Gaussian output
+Gaussian*OUTPUT/
+Guassian*OUTPUT/
