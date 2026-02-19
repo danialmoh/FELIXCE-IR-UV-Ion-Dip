@@ -167,7 +167,7 @@ class FELIX_HDF5_Reader:
                         # Extract wavenumber from the 'X' dataset
                         # Access path: file['Rawdat'][subgroup_name]["X"][first_element]
                         wavenumber_raw = self.file['Rawdat'][subgroup_name]["X"][:][0]
-                        wavenumber_rounded = np.round(wavenumber_raw/self.step_size)*self.step_size
+                        wavenumber_rounded = (np.round(wavenumber_raw)/self.step_size)*self.step_size
                         wavenumber_formatted = float(f"{wavenumber_rounded:.2f}")
 
                         # Store both raw and processed wavenumbers
