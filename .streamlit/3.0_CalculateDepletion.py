@@ -985,193 +985,197 @@ plot_columnIndex_withoutIR = st.session_state.get("plot_columnIndex_withoutIR", 
 plot_columnIndex_withIR = st.session_state.get("plot_columnIndex_withIR", None)
 compilation_baseline_corrected_data = st.session_state.get("compilation_baseline_corrected_data", None)
 
-with st.expander("Step 1 · Integration parameters", expanded=True):
-    col_integrate, col_history = st.columns([3, 1])
-    with col_integrate:
-        options = ["Average mass", "Custom input"]
-        selected_option = st.session_state.get("mass_peaks", options[0])
-        selected_index = options.index(selected_option)
-        st.session_state["mass_peaks"] = st.radio(
-            "Mass peak selection method",
-            options=options,
-            index=selected_index,
-            horizontal=True,
-            help="Use the average complex mass or provide custom isotope peaks.",
-        )
-        mass_peaks = st.session_state.get("mass_peaks", None)
 
-        if mass_peaks == "Average mass":
-            mass_input = st.text_input(
-                "Active mass peak(s)",
-                value=mass_complex,
-                help="Enter a single mass or comma-separated list.",
-            )
-            list_mass_isotope = [float(mass_input)]
-            st.session_state["list_mass_isotope"] = list_mass_isotope
-        else:
-            default_list = ", ".join(
-                str(x) for x in st.session_state.get("list_mass_isotope", [])
-            )
-            mass_input = st.text_input(
-                "Custom mass peaks (comma-separated)", value=default_list
-            )
-            list_mass_isotope = [float(x.strip()) for x in mass_input.split(",")]
-            st.session_state["list_mass_isotope"] = list_mass_isotope
+col1, col2 = st.columns([1, 1])
 
-    with col_history:
-        st.write("Recent selections")
-        if "input_history" not in st.session_state:
-            st.session_state["input_history"] = []
-        if list_mass_isotope and list_mass_isotope not in st.session_state["input_history"]:
-            st.session_state["input_history"].append(list_mass_isotope)
-            if len(st.session_state["input_history"]) > 5:
-                st.session_state["input_history"].pop(0)
-        for item in st.session_state.get("input_history", []):
-            st.code(", ".join(str(x) for x in item))
+with col1:
+    with st.expander("Step 1 · Integration parameters", expanded=True):
+        col_integrate, col_history = st.columns([3, 1])
+        with col_integrate:
+            options = ["Average mass", "Custom input"]
+            selected_option = st.session_state.get("mass_peaks", options[0])
+            selected_index = options.index(selected_option)
+            st.session_state["mass_peaks"] = st.radio(
+                "Mass peak selection method",
+                options=options,
+                index=selected_index,
+                horizontal=True,
+                help="Use the average complex mass or provide custom isotope peaks.",
+            )
+            mass_peaks = st.session_state.get("mass_peaks", None)
 
-with st.expander("Step 2 · Mass & plot configuration", expanded=False):
-    col_mass, col_plot = st.columns(2)
-    with col_mass:
-        st.write("Active peaks")
-        st.code(", ".join(str(x) for x in list_mass_isotope))
-        st.session_state["search_width"] = float(
-            st.text_input(
-                "Peak-finding width per peak (amu)",
-                value=st.session_state.get("search_width", 0.5),
-            )
-        )
-        st.session_state["isotope_scan_width"] = float(
-            st.text_input(
-                "Integration width per peak (amu)",
-                value=st.session_state.get("isotope_scan_width", 0.3),
-            )
-        )
-        st.session_state["save_output"] = st.toggle(
-            "Save outputs to output directory",
-            value=st.session_state.get("save_output", True),
-        )
+            if mass_peaks == "Average mass":
+                mass_input = st.text_input(
+                    "Active mass peak(s)",
+                    value=mass_complex,
+                    help="Enter a single mass or comma-separated list.",
+                )
+                list_mass_isotope = [float(mass_input)]
+                st.session_state["list_mass_isotope"] = list_mass_isotope
+            else:
+                default_list = ", ".join(
+                    str(x) for x in st.session_state.get("list_mass_isotope", [])
+                )
+                mass_input = st.text_input(
+                    "Custom mass peaks (comma-separated)", value=default_list
+                )
+                list_mass_isotope = [float(x.strip()) for x in mass_input.split(",")]
+                st.session_state["list_mass_isotope"] = list_mass_isotope
 
-    with col_plot:
-        st.session_state["plot_columnIndex_withoutIR"] = int(
-            st.number_input(
-                "Column index · without IR signal",
-                value=st.session_state.get("plot_columnIndex_withoutIR", None),
-            )
-        )
-        st.session_state["plot_columnIndex_withIR"] = int(
-            st.number_input(
-                "Column index · with IR signal",
-                value=st.session_state.get("plot_columnIndex_withIR", None),
-            )
-        )
-        # available_wavenumbers = sorted(compiled_data.keys()) if compiled_data else []
-        # if available_wavenumbers:
-        #     default_idx = 0
-        #     prev_selection = st.session_state.get("plot_wavenumber")
-        #     if prev_selection in available_wavenumbers:
-        #         default_idx = available_wavenumbers.index(prev_selection)
-        #     st.session_state["plot_wavenumber"] = st.selectbox(
-        #         "Wavenumber to inspect",
-        #         options=available_wavenumbers,
-        #         index=default_idx,
-        #         format_func=lambda x: f"{x:.2f}",
-        #         help="Select from wavenumbers available in compiled data.",
-        #     )
-            
-        #     # Display count for selected wavenumber
-        #     unique_wavenumbers = st.session_state.get("unique_wavenumbers")
-        #     if unique_wavenumbers is not None:
-        #         selected_wn = st.session_state["plot_wavenumber"]
-        #         matching_rows = unique_wavenumbers[unique_wavenumbers["Unique Wavenumbers"] == selected_wn]
-        #         if not matching_rows.empty:
-        #             count = matching_rows.iloc[0]["Counts"]
-        #             st.info(f"📊 Count for wavenumber {selected_wn:.2f}: **{int(count)}**")
-        # else:
-        #     st.info(
-        #         "No compiled wavenumbers available yet. Run earlier steps to populate data.",
-        #         icon="ℹ️",
-        #     )
-        #     st.session_state["plot_wavenumber"] = st.session_state.get("plot_wavenumber", 0.0)
+        with col_history:
+            st.write("Recent selections")
+            if "input_history" not in st.session_state:
+                st.session_state["input_history"] = []
+            if list_mass_isotope and list_mass_isotope not in st.session_state["input_history"]:
+                st.session_state["input_history"].append(list_mass_isotope)
+                if len(st.session_state["input_history"]) > 5:
+                    st.session_state["input_history"].pop(0)
+            for item in st.session_state.get("input_history", []):
+                st.code(", ".join(str(x) for x in item))
 
-        col_axes = st.columns(3)
-        with col_axes[0]:
-            st.session_state["mass_xmin"] = float(
+with col2:
+    tab1, tab2 = st.tabs(["Step 2 · Mass & plot configuration", "Step 3 · Depletion window & smoothing"])
+
+    with tab1:
+        col_mass, col_plot, col_axes = st.columns([1,1,1])
+        with col_mass:
+            st.write("Active peaks")
+            st.code(", ".join(str(x) for x in list_mass_isotope))
+            st.session_state["search_width"] = float(
                 st.text_input(
-                    "Mass plot X min",
-                    value=st.session_state.get("mass_xmin", None),
+                    "Peak-finding width per peak (amu)",
+                    value=st.session_state.get("search_width", 0.5),
                 )
             )
-        with col_axes[1]:
-            st.session_state["mass_xmax"] = float(
+            st.session_state["isotope_scan_width"] = float(
                 st.text_input(
-                    "Mass plot X max",
-                    value=st.session_state.get("mass_xmax", None),
+                    "Integration width per peak (amu)",
+                    value=st.session_state.get("isotope_scan_width", 0.3),
                 )
             )
-        with col_axes[2]:
-            st.session_state["mass_ymax"] = float(
+            st.session_state["save_output"] = st.toggle(
+                "Save outputs to output directory",
+                value=st.session_state.get("save_output", True),
+            )
+
+        with col_plot:
+            st.session_state["plot_columnIndex_withoutIR"] = int(
+                st.number_input(
+                    "Column index · without IR signal",
+                    value=st.session_state.get("plot_columnIndex_withoutIR", None),
+                )
+            )
+            st.session_state["plot_columnIndex_withIR"] = int(
+                st.number_input(
+                    "Column index · with IR signal",
+                    value=st.session_state.get("plot_columnIndex_withIR", None),
+                )
+            )
+            # available_wavenumbers = sorted(compiled_data.keys()) if compiled_data else []
+            # if available_wavenumbers:
+            #     default_idx = 0
+            #     prev_selection = st.session_state.get("plot_wavenumber")
+            #     if prev_selection in available_wavenumbers:
+            #         default_idx = available_wavenumbers.index(prev_selection)
+            #     st.session_state["plot_wavenumber"] = st.selectbox(
+            #         "Wavenumber to inspect",
+            #         options=available_wavenumbers,
+            #         index=default_idx,
+            #         format_func=lambda x: f"{x:.2f}",
+            #         help="Select from wavenumbers available in compiled data.",
+            #     )
+                
+            #     # Display count for selected wavenumber
+            #     unique_wavenumbers = st.session_state.get("unique_wavenumbers")
+            #     if unique_wavenumbers is not None:
+            #         selected_wn = st.session_state["plot_wavenumber"]
+            #         matching_rows = unique_wavenumbers[unique_wavenumbers["Unique Wavenumbers"] == selected_wn]
+            #         if not matching_rows.empty:
+            #             count = matching_rows.iloc[0]["Counts"]
+            #             st.info(f"📊 Count for wavenumber {selected_wn:.2f}: **{int(count)}**")
+            # else:
+            #     st.info(
+            #         "No compiled wavenumbers available yet. Run earlier steps to populate data.",
+            #         icon="ℹ️",
+            #     )
+            #     st.session_state["plot_wavenumber"] = st.session_state.get("plot_wavenumber", 0.0)
+
+            with col_axes:
+                st.session_state["mass_xmin"] = float(
+                    st.text_input(
+                        "Mass plot X min",
+                        value=st.session_state.get("mass_xmin", None),
+                    )
+                )
+                st.session_state["mass_xmax"] = float(
+                    st.text_input(
+                        "Mass plot X max",
+                        value=st.session_state.get("mass_xmax", None),
+                    )
+                )
+                st.session_state["mass_ymax"] = float(
+                    st.text_input(
+                        "Mass plot Y max",
+                        value=st.session_state.get("mass_ymax", None),
+                    )
+                )
+
+    with tab2:
+        col_dep, col_ln = st.columns(2)
+        with col_dep:
+            st.session_state["depletion_xmin"] = float(
                 st.text_input(
-                    "Mass plot Y max",
-                    value=st.session_state.get("mass_ymax", None),
+                    "Depletion plot wavenumber min",
+                    value=st.session_state.get("depletion_xmin", 0.0),
+                )
+            )
+            st.session_state["depletion_xmax"] = float(
+                st.text_input(
+                    "Depletion plot wavenumber max",
+                    value=st.session_state.get("depletion_xmax", 2000),
+                )
+            )
+            st.session_state["depletion_ymin"] = float(
+                st.text_input(
+                    "Depletion y-axis min",
+                    value=st.session_state.get("depletion_ymin", defaults.get("depletion_ymin", None)),
+                )
+            )
+            st.session_state["depletion_ymax"] = float(
+                st.text_input(
+                    "Depletion y-axis max",
+                    value=st.session_state.get("depletion_ymax", defaults.get("depletion_ymax", None)),
                 )
             )
 
-with st.expander("Step 3 · Depletion window & smoothing", expanded=False):
-    col_dep, col_ln = st.columns(2)
-    with col_dep:
-        st.session_state["depletion_xmin"] = float(
-            st.text_input(
-                "Depletion plot wavenumber min",
-                value=st.session_state.get("depletion_xmin", 0.0),
+        with col_ln:
+            st.session_state["ln_depletion_ymin"] = float(
+                st.text_input(
+                    "-ln(Depletion) y-axis min",
+                    value=st.session_state.get("ln_depletion_ymin", defaults.get("ln_depletion_ymin", None)),
+                )
             )
-        )
-        st.session_state["depletion_xmax"] = float(
-            st.text_input(
-                "Depletion plot wavenumber max",
-                value=st.session_state.get("depletion_xmax", 2000),
+            st.session_state["ln_depletion_ymax"] = float(
+                st.text_input(
+                    "-ln(Depletion) y-axis max",
+                    value=st.session_state.get("ln_depletion_ymax", defaults.get("ln_depletion_ymax", None)),
+                )
             )
-        )
-        st.session_state["depletion_ymin"] = float(
-            st.text_input(
-                "Depletion y-axis min",
-                value=st.session_state.get("depletion_ymin", defaults.get("depletion_ymin", None)),
+            st.session_state["data_display_option"] = st.radio(
+                "Display data",
+                options=["Original", "Smoothed"],
+                index=0,
+                help="Apply Savitzky–Golay smoothing to depletion traces.",
             )
-        )
-        st.session_state["depletion_ymax"] = float(
-            st.text_input(
-                "Depletion y-axis max",
-                value=st.session_state.get("depletion_ymax", defaults.get("depletion_ymax", None)),
-            )
-        )
-
-    with col_ln:
-        st.session_state["ln_depletion_ymin"] = float(
-            st.text_input(
-                "-ln(Depletion) y-axis min",
-                value=st.session_state.get("ln_depletion_ymin", defaults.get("ln_depletion_ymin", None)),
-            )
-        )
-        st.session_state["ln_depletion_ymax"] = float(
-            st.text_input(
-                "-ln(Depletion) y-axis max",
-                value=st.session_state.get("ln_depletion_ymax", defaults.get("ln_depletion_ymax", None)),
-            )
-        )
-        st.session_state["data_display_option"] = st.radio(
-            "Display data",
-            options=["Original", "Smoothed"],
-            index=0,
-            help="Apply Savitzky–Golay smoothing to depletion traces.",
-        )
-        if st.session_state["data_display_option"] == "Smoothed":
-            st.session_state["smoothing_window"] = st.slider(
-                "Smoothing window size",
-                min_value=3,
-                max_value=21,
-                value=9,
-                step=2,
-                help="Window size must be odd.",
-            )
+            if st.session_state["data_display_option"] == "Smoothed":
+                st.session_state["smoothing_window"] = st.slider(
+                    "Smoothing window size",
+                    min_value=3,
+                    max_value=21,
+                    value=9,
+                    step=2,
+                    help="Window size must be odd.",
+                )
 
 st.divider()
 

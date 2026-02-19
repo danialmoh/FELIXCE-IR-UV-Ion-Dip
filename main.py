@@ -30,7 +30,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.logo(r"logo_FELIXCE_solid.png")
+st.logo(r"./documentation/logo/logo_FELIXCE_solid.png")
 
 # Sidebar branding and credits
 with st.sidebar:
