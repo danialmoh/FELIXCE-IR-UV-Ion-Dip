@@ -393,6 +393,22 @@ if "rempi_baseline_corrected" in st.session_state:
         molecule_mass = st.session_state.get("rempi_molecule_mass", 100)
         molecule_name = st.session_state.get("rempi_molecule_name", "")
         
+        # Store in session state for persistent display
+        st.session_state["plot_summed_spectrum"] = {
+            "x_mass": x_mass,
+            "summed_signal": summed_signal,
+            "molecule_mass": molecule_mass,
+            "molecule_name": molecule_name
+        }
+    
+    # Display plot if data exists in session state
+    if "plot_summed_spectrum" in st.session_state:
+        plot_data = st.session_state["plot_summed_spectrum"]
+        x_mass = plot_data["x_mass"]
+        summed_signal = plot_data["summed_signal"]
+        molecule_mass = plot_data["molecule_mass"]
+        molecule_name = plot_data["molecule_name"]
+        
         fig = go.Figure()
         
         fig.add_trace(go.Scatter(
@@ -426,16 +442,421 @@ if "rempi_baseline_corrected" in st.session_state:
         fig.update_xaxes(range=[molecule_mass - 20, molecule_mass + 20])
         
         st.plotly_chart(fig, use_container_width=True)
+        
+        # Export options
+        col_export1, col_export2 = st.columns(2)
+        with col_export1:
+            if st.button("💾 Save Plot as PNG", key="save_summed_spectrum"):
+                import plotly.io as pio
+                file_directory = st.session_state.get("rempi_file_directory", "")
+                if file_directory:
+                    output_path = Path(file_directory) / "output"
+                    output_path.mkdir(parents=True, exist_ok=True)
+                    filepath = output_path / "REMPI_summed_spectrum.png"
+                    pio.write_image(fig, str(filepath), width=1200, height=600)
+                    st.success(f"✅ Saved to `{filepath}`")
+                else:
+                    st.warning("No output directory set")
+        with col_export2:
+            if st.button("📊 Add to Report", key="report_summed_spectrum"):
+                # Convert Plotly to matplotlib for report
+                import matplotlib.pyplot as plt
+                fig_mpl, ax = plt.subplots(figsize=(10, 4))
+                ax.plot(x_mass, summed_signal, 'b-', linewidth=1)
+                ax.axvline(molecule_mass, color='green', linestyle='--', linewidth=2, label=f'{molecule_name} ({molecule_mass} amu)')
+                ax.axhline(0, color='lime', linewidth=1)
+                ax.set_xlabel('Mass (amu)', fontsize=12)
+                ax.set_ylabel('Intensity (a.u.)', fontsize=12)
+                ax.set_title('REMPI Summed Spectrum (Baseline Corrected)', fontsize=14)
+                ax.set_xlim(molecule_mass - 20, molecule_mass + 20)
+                ax.legend()
+                ax.grid(alpha=0.3)
+                
+                add_plot_to_report_button(
+                    fig_mpl,
+                    "REMPI Summed Spectrum",
+                    key_suffix="rempi_summed",
+                    description="Baseline-corrected REMPI summed mass spectrum"
+                )
+                plt.close(fig_mpl)
     
-    # Export button
-    st.markdown("### Export Data")
-    if st.button("💾 Export Baseline-Corrected Data to CSV", use_container_width=True):
-        file_directory = st.session_state.get("rempi_file_directory", "")
-        if file_directory:
-            output_path = Path(file_directory) / "output"
-            output_path.mkdir(parents=True, exist_ok=True)
-            filepath = output_path / "REMPI_baseline_corrected.csv"
-            corrected_df.to_csv(filepath, index=True)
-            st.success(f"✅ Exported to `{filepath}`")
+    # 2D Heatmap: Wavelength vs Mass
+    st.markdown("### 2D Action Spectrum (Wavelength vs Mass)")
+    st.caption("Shows which mass channels have transitions at which wavelengths")
+    
+    # Mass range selector (always visible)
+    x_mass = st.session_state["rempi_x_mass"]
+    st.markdown("#### Plot Range Settings")
+    col_range1, col_range2 = st.columns(2)
+    with col_range1:
+        mass_min_2d = st.number_input("Min mass (amu)", value=float(np.min(x_mass)), key="heatmap_mass_min_preset")
+    with col_range2:
+        mass_max_2d = st.number_input("Max mass (amu)", value=float(np.max(x_mass)), key="heatmap_mass_max_preset")
+    
+    if st.button("🗺️ Generate 2D Heatmap", use_container_width=True):
+        x_mass = st.session_state["rempi_x_mass"]
+        
+        # Get only wavelength columns (exclude 'Summed')
+        wavelength_cols = [col for col in corrected_df.columns if col != 'Summed']
+        
+        # Store in session state for persistent display
+        st.session_state["generate_2d_heatmap"] = True
+    
+    # Display heatmap if flag is set
+    if st.session_state.get("generate_2d_heatmap", False):
+        x_mass = st.session_state["rempi_x_mass"]
+        wavelength_cols = [col for col in corrected_df.columns if col != 'Summed']
+        
+        # Debug info
+        st.info(f"**Debug Info:**")
+        st.write(f"- Total columns: {len(corrected_df.columns)}")
+        st.write(f"- Wavelength columns: {len(wavelength_cols)}")
+        st.write(f"- First 5 column names: {list(corrected_df.columns[:5])}")
+        st.write(f"- Data shape: {corrected_df.shape}")
+        st.write(f"- Mass range: {x_mass.min():.2f} - {x_mass.max():.2f} amu")
+        st.write(f"- Data value range: {corrected_df[wavelength_cols].min().min():.6f} to {corrected_df[wavelength_cols].max().max():.6f}")
+        
+        if len(wavelength_cols) == 0:
+            st.error("No wavelength data found")
         else:
-            st.error("Please set an output directory first (Step 8.0).")
+            # Create Z matrix (intensity values)
+            Z = corrected_df[wavelength_cols].T.values  # Transpose: rows=wavelength, cols=mass
+            
+            # Create mesh for plotting - extract wavelength values from column names
+            # Column names may be like 'bc_616.02' or just '616.02'
+            wavelengths = []
+            for col in wavelength_cols:
+                col_str = str(col)
+                # Remove 'bc_' prefix if present
+                if col_str.startswith('bc_'):
+                    col_str = col_str[3:]
+                try:
+                    wavelengths.append(float(col_str))
+                except ValueError:
+                    # If still can't convert, try to extract numeric part
+                    import re
+                    match = re.search(r'[\d.]+', col_str)
+                    if match:
+                        wavelengths.append(float(match.group()))
+                    else:
+                        st.warning(f"Could not parse wavelength from column: {col}")
+            wavelengths = np.array(wavelengths)
+            
+            # Create heatmap
+            fig_2d = go.Figure(data=go.Heatmap(
+                z=Z,
+                x=x_mass,
+                y=wavelengths,
+                colorscale='Hot',
+                colorbar=dict(title="Intensity (a.u.)"),
+                hoverongaps=False,
+                hovertemplate='Wavelength: %{y:.2f} nm<br>Mass: %{x:.2f} amu<br>Intensity: %{z:.4f}<extra></extra>'
+            ))
+            
+            # Add molecule mass line if available
+            molecule_mass = st.session_state.get("rempi_molecule_mass", None)
+            if molecule_mass:
+                fig_2d.add_vline(
+                    x=molecule_mass,
+                    line_width=2,
+                    line_dash="dash",
+                    line_color="cyan",
+                    annotation_text=f"Parent: {molecule_mass} amu",
+                    annotation_position="top right"
+                )
+            
+            fig_2d.update_layout(
+                title="2D REMPI Action Spectrum",
+                xaxis_title="Mass (amu)",
+                yaxis_title="Wavelength (nm)",
+                height=600,
+                xaxis=dict(showgrid=False),
+                yaxis=dict(showgrid=False)
+            )
+            
+            st.plotly_chart(fig_2d, use_container_width=True)
+            
+            # Export options for full heatmap
+            col_exp_2d1, col_exp_2d2 = st.columns(2)
+            with col_exp_2d1:
+                if st.button("💾 Save Full Heatmap as PNG", key="save_2d_full"):
+                    import plotly.io as pio
+                    file_directory = st.session_state.get("rempi_file_directory", "")
+                    if file_directory:
+                        output_path = Path(file_directory) / "output"
+                        output_path.mkdir(parents=True, exist_ok=True)
+                        filepath = output_path / "REMPI_2D_heatmap_full.png"
+                        pio.write_image(fig_2d, str(filepath), width=1400, height=800)
+                        st.success(f"✅ Saved to `{filepath}`")
+                    else:
+                        st.warning("No output directory set")
+            with col_exp_2d2:
+                if st.button("📊 Add Full Heatmap to Report", key="report_2d_full"):
+                    # Convert to matplotlib
+                    import matplotlib.pyplot as plt
+                    fig_mpl, ax = plt.subplots(figsize=(12, 6))
+                    im = ax.pcolormesh(x_mass, wavelengths, Z, cmap='hot', shading='auto')
+                    ax.set_xlabel('Mass (amu)', fontsize=12)
+                    ax.set_ylabel('Wavelength (nm)', fontsize=12)
+                    ax.set_title('2D REMPI Action Spectrum', fontsize=14)
+                    plt.colorbar(im, ax=ax, label='Intensity (a.u.)')
+                    
+                    add_plot_to_report_button(
+                        fig_mpl,
+                        "2D REMPI Action Spectrum (Full)",
+                        key_suffix="rempi_2d_full",
+                        description="2D wavelength vs mass heatmap showing resonant transitions"
+                    )
+                    plt.close(fig_mpl)
+            
+            # Use preset mass range for zoomed view
+            st.markdown("#### Zoomed View (using range settings above)")
+            
+            # Filter by mass range using preset values
+            mass_indices = np.where((x_mass >= mass_min_2d) & (x_mass <= mass_max_2d))[0]
+            
+            if len(mass_indices) > 0:
+                Z_filtered = Z[:, mass_indices]
+                x_mass_filtered = x_mass[mass_indices]
+                
+                fig_zoom = go.Figure(data=go.Heatmap(
+                    z=Z_filtered,
+                    x=x_mass_filtered,
+                    y=wavelengths,
+                    colorscale='Hot',
+                    colorbar=dict(title="Intensity (a.u.)"),
+                    hovertemplate='Wavelength: %{y:.2f} nm<br>Mass: %{x:.2f} amu<br>Intensity: %{z:.4f}<extra></extra>'
+                ))
+                
+                if molecule_mass and mass_min_2d <= molecule_mass <= mass_max_2d:
+                    fig_zoom.add_vline(
+                        x=molecule_mass,
+                        line_width=2,
+                        line_dash="dash",
+                        line_color="cyan"
+                    )
+                
+                fig_zoom.update_layout(
+                    title=f"2D REMPI Action Spectrum (Mass: {mass_min_2d:.1f}-{mass_max_2d:.1f} amu)",
+                    xaxis_title="Mass (amu)",
+                    yaxis_title="Wavelength (nm)",
+                    height=600,
+                    xaxis=dict(showgrid=False),
+                    yaxis=dict(showgrid=False)
+                )
+                
+                st.plotly_chart(fig_zoom, use_container_width=True)
+                
+                # Export options for zoomed heatmap
+                col_exp_zoom1, col_exp_zoom2 = st.columns(2)
+                with col_exp_zoom1:
+                    if st.button("💾 Save Zoomed Heatmap as PNG", key="save_2d_zoom"):
+                        import plotly.io as pio
+                        file_directory = st.session_state.get("rempi_file_directory", "")
+                        if file_directory:
+                            output_path = Path(file_directory) / "output"
+                            output_path.mkdir(parents=True, exist_ok=True)
+                            filepath = output_path / f"REMPI_2D_heatmap_zoom_{mass_min_2d:.0f}-{mass_max_2d:.0f}amu.png"
+                            pio.write_image(fig_zoom, str(filepath), width=1400, height=800)
+                            st.success(f"✅ Saved to `{filepath}`")
+                        else:
+                            st.warning("No output directory set")
+                with col_exp_zoom2:
+                    if st.button("📊 Add Zoomed Heatmap to Report", key="report_2d_zoom"):
+                        # Convert to matplotlib
+                        import matplotlib.pyplot as plt
+                        fig_mpl, ax = plt.subplots(figsize=(12, 6))
+                        im = ax.pcolormesh(x_mass_filtered, wavelengths, Z_filtered, cmap='hot', shading='auto')
+                        ax.set_xlabel('Mass (amu)', fontsize=12)
+                        ax.set_ylabel('Wavelength (nm)', fontsize=12)
+                        ax.set_title(f'2D REMPI Action Spectrum ({mass_min_2d:.1f}-{mass_max_2d:.1f} amu)', fontsize=14)
+                        plt.colorbar(im, ax=ax, label='Intensity (a.u.)')
+                        
+                        add_plot_to_report_button(
+                            fig_mpl,
+                            f"2D REMPI Action Spectrum (Zoom: {mass_min_2d:.1f}-{mass_max_2d:.1f} amu)",
+                            key_suffix="rempi_2d_zoom",
+                            description=f"Zoomed 2D heatmap for mass range {mass_min_2d:.1f}-{mass_max_2d:.1f} amu"
+                        )
+                        plt.close(fig_mpl)
+    
+    # 1D Action Spectrum for specific mass channel
+    st.markdown("---")
+    st.markdown("### 1D Action Spectrum (Single Mass Channel)")
+    st.caption("Extract wavelength-dependent intensity for a specific mass")
+    
+    # Get mass axis from session state
+    x_mass = st.session_state.get("rempi_x_mass")
+    if x_mass is None:
+        st.warning("Mass axis not found. Please register parameters first.")
+    else:
+        col_mass_select, col_tolerance = st.columns([3, 1])
+        with col_mass_select:
+            target_mass = st.number_input(
+                "Select mass (amu)", 
+                min_value=float(x_mass.min()),
+                max_value=float(x_mass.max()),
+                value=float(st.session_state.get("rempi_molecule_mass", x_mass[len(x_mass)//2])),
+                step=0.1,
+                key="action_spectrum_mass"
+            )
+        with col_tolerance:
+            mass_tolerance = st.number_input(
+                "Mass tolerance (±amu)",
+                min_value=0.1,
+                max_value=10.0,
+                value=0.5,
+                step=0.1,
+                key="action_spectrum_tolerance"
+            )
+        
+        # Get wavelength columns
+        wavelength_cols = [col for col in corrected_df.columns if col != 'Summed']
+        
+        if st.button("📊 Plot 1D Action Spectrum", use_container_width=True):
+            # Store parameters in session state
+            st.session_state["plot_1d_action"] = {
+                "target_mass": target_mass,
+                "mass_tolerance": mass_tolerance,
+                "wavelength_cols": wavelength_cols
+            }
+        
+        # Display 1D action spectrum if parameters are set
+        if "plot_1d_action" in st.session_state:
+            params = st.session_state["plot_1d_action"]
+            target_mass = params["target_mass"]
+            mass_tolerance = params["mass_tolerance"]
+            wavelength_cols = params["wavelength_cols"]
+            
+            # Parse wavelengths from column names
+            wavelengths = []
+            for col in wavelength_cols:
+                col_str = str(col)
+                if col_str.startswith('bc_'):
+                    col_str = col_str[3:]
+                try:
+                    wavelengths.append(float(col_str))
+                except ValueError:
+                    import re
+                    match = re.search(r'[\d.]+', col_str)
+                    if match:
+                        wavelengths.append(float(match.group()))
+            wavelengths = np.array(wavelengths)
+            
+            # Find mass indices within tolerance
+            mass_indices = np.where(np.abs(x_mass - target_mass) <= mass_tolerance)[0]
+            
+            if len(mass_indices) == 0:
+                st.error(f"No mass points found within ±{mass_tolerance} amu of {target_mass} amu")
+            else:
+                # Average signal over mass tolerance window
+                avg_mass = np.mean(x_mass[mass_indices])
+                
+                # Extract intensity at each wavelength for this mass range
+                intensities = []
+                for col in wavelength_cols:
+                    intensity = np.mean(corrected_df[col].values[mass_indices])
+                    intensities.append(intensity)
+                
+                # Create 1D plot
+                fig_1d = go.Figure()
+                
+                fig_1d.add_trace(go.Scatter(
+                    x=wavelengths,
+                    y=intensities,
+                    mode='lines+markers',
+                    name=f'Mass {target_mass:.1f} amu',
+                    line=dict(width=2, color='blue'),
+                    marker=dict(size=6)
+                ))
+                
+                fig_1d.update_layout(
+                    title=f"Action Spectrum for m/z = {target_mass:.1f} ± {mass_tolerance} amu (actual: {avg_mass:.2f} amu)",
+                    xaxis_title="Wavelength (nm)",
+                    yaxis_title="Ion Intensity (a.u.)",
+                    height=400,
+                    showlegend=True,
+                    hovermode='x unified'
+                )
+                
+                # Add zero line
+                fig_1d.add_hline(y=0, line_width=1, line_dash="dash", line_color="gray")
+                
+                st.plotly_chart(fig_1d, use_container_width=True)
+                
+                # Show stats
+                st.info(f"**Statistics:** Peak intensity: {max(intensities):.4f} at {wavelengths[np.argmax(intensities)]:.2f} nm | Mean: {np.mean(intensities):.4f}")
+                
+                # Export options for 1D action spectrum
+                col_exp_1d1, col_exp_1d2 = st.columns(2)
+                with col_exp_1d1:
+                    if st.button("💾 Save 1D Action Spectrum as PNG", key="save_1d_action"):
+                        import plotly.io as pio
+                        file_directory = st.session_state.get("rempi_file_directory", "")
+                        if file_directory:
+                            output_path = Path(file_directory) / "output"
+                            output_path.mkdir(parents=True, exist_ok=True)
+                            filepath = output_path / f"REMPI_1D_action_spectrum_m{target_mass:.1f}.png"
+                            pio.write_image(fig_1d, str(filepath), width=1200, height=500)
+                            st.success(f"✅ Saved to `{filepath}`")
+                        else:
+                            st.warning("No output directory set")
+                with col_exp_1d2:
+                    if st.button("📊 Add 1D Action Spectrum to Report", key="report_1d_action"):
+                        # Convert to matplotlib
+                        import matplotlib.pyplot as plt
+                        fig_mpl, ax = plt.subplots(figsize=(10, 4))
+                        ax.plot(wavelengths, intensities, 'b-', marker='o', linewidth=2, markersize=4)
+                        ax.axhline(0, color='gray', linestyle='--', linewidth=1)
+                        ax.set_xlabel('Wavelength (nm)', fontsize=12)
+                        ax.set_ylabel('Ion Intensity (a.u.)', fontsize=12)
+                        ax.set_title(f'Action Spectrum for m/z = {target_mass:.1f} ± {mass_tolerance} amu', fontsize=14)
+                        ax.grid(alpha=0.3)
+                        
+                        add_plot_to_report_button(
+                            fig_mpl,
+                            f"1D Action Spectrum (m/z = {target_mass:.1f})",
+                            key_suffix=f"rempi_1d_{target_mass:.0f}",
+                            description=f"Wavelength-dependent ion yield for mass {target_mass:.1f} ± {mass_tolerance} amu"
+                        )
+                        plt.close(fig_mpl)
+    
+    # Export buttons
+    st.markdown("### Export Data")
+    
+    col_exp1, col_exp2 = st.columns(2)
+    
+    with col_exp1:
+        if st.button("💾 Export Full Baseline-Corrected Data", use_container_width=True):
+            file_directory = st.session_state.get("rempi_file_directory", "")
+            if file_directory:
+                output_path = Path(file_directory) / "output"
+                output_path.mkdir(parents=True, exist_ok=True)
+                filepath = output_path / "REMPI_baseline_corrected.csv"
+                corrected_df.to_csv(filepath, index=True)
+                st.success(f"✅ Exported to `{filepath}`")
+            else:
+                st.warning("No output directory set")
+    
+    with col_exp2:
+        if st.button("🔬 Export for Peak Detection (4.2)", use_container_width=True):
+            x_mass = st.session_state.get("rempi_x_mass")
+            if x_mass is None:
+                st.error("Mass axis not found. Please register parameters first.")
+            else:
+                # Create Peak Detection compatible format
+                peak_detection_df = pd.DataFrame({
+                    'x_mass': x_mass,
+                    'baseline_corrected_signal_withoutIR': corrected_df["Summed"].values
+                })
+                
+                file_directory = st.session_state.get("rempi_file_directory", "")
+                if file_directory:
+                    output_path = Path(file_directory) / "output"
+                    output_path.mkdir(parents=True, exist_ok=True)
+                    filepath = output_path / "REMPI_for_peak_detection.csv"
+                    peak_detection_df.to_csv(filepath, index=False)
+                    st.success(f"✅ Exported to `{filepath}`")
+                    st.info("📌 Upload this CSV in **Section 4.2 Peak Detection** → Upload CSV file")
+                else:
+                    st.warning("No output directory set")
