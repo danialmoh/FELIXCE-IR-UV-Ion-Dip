@@ -908,6 +908,7 @@ import plotly.graph_objs as go
 import configparser
 import os
 from scipy.signal import savgol_filter  # Reuse your existing smoothing function
+from scipy.interpolate import interp1d  # For wavenumber calibration
 from packages.ReportManager import add_plot_to_report_button, init_report_session
 
 init_report_session()
@@ -1176,6 +1177,222 @@ with col2:
                     step=2,
                     help="Window size must be odd.",
                 )
+
+st.divider()
+
+# ==================== WAVENUMBER CALIBRATION SECTION ====================
+with st.expander("📏 Wavenumber Calibration", expanded=True):
+    st.markdown("**Apply calibration to convert scanned wavenumbers to real values in plots**")
+    
+    # Toggle for calibration (default ON)
+    st.session_state["use_wavenumber_calibration"] = st.toggle(
+        "Apply wavenumber calibration to plots", 
+        value=st.session_state.get("use_wavenumber_calibration", True),
+        help="When enabled, plots will show calibrated wavenumbers instead of scanned values"
+    )
+    
+    if st.session_state["use_wavenumber_calibration"]:
+        # CSV upload
+        col_upload, col_info = st.columns([2, 1])
+        with col_upload:
+            uploaded_cal_file = st.file_uploader(
+                "Upload calibration CSV (columns: Scanned_cm-1, Real_cm-1)",
+                type=['csv'],
+                help="CSV file with two columns: scanned and real wavenumbers"
+            )
+            
+            if uploaded_cal_file is not None:
+                try:
+                    uploaded_df = pd.read_csv(uploaded_cal_file)
+                    if "Scanned_cm-1" in uploaded_df.columns and "Real_cm-1" in uploaded_df.columns:
+                        st.session_state["calibration_table"] = uploaded_df[["Scanned_cm-1", "Real_cm-1"]]
+                        st.success(f"✅ Loaded {len(uploaded_df)} calibration points from CSV")
+                    else:
+                        st.error("CSV must have columns: 'Scanned_cm-1' and 'Real_cm-1'")
+                except Exception as e:
+                    st.error(f"Error reading CSV: {e}")
+        
+        with col_info:
+            st.info("CSV format:\n```\nScanned_cm-1,Real_cm-1\n200.0,197.5\n500.0,498.2\n```", icon="ℹ️")
+        
+        # Initialize default calibration table if not exists
+        if "calibration_table" not in st.session_state:
+            st.session_state["calibration_table"] = pd.DataFrame({
+                "Scanned_cm-1": [200.0, 500.0, 750.0, 1000.0, 1500.0],
+                "Real_cm-1": [197.5, 498.2, 745.7, 995.0, 1492.0]
+            })
+        
+        # Editable table - using on_change to prevent immediate rerun
+        st.markdown("**Calibration Points** (editable - click a button below to apply changes):")
+        edited_table = st.data_editor(
+            st.session_state["calibration_table"],
+            num_rows="dynamic",
+            use_container_width=True,
+            key="calibration_editor",
+            disabled=False
+        )
+        
+        # Action buttons
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("📊 Preview Calibration Curve", use_container_width=True):
+                # Save edited table to session state
+                st.session_state["calibration_table"] = edited_table
+                try:
+                    scanned = edited_table["Scanned_cm-1"].values
+                    real = edited_table["Real_cm-1"].values
+                    
+                    if len(scanned) < 2:
+                        st.error("Need at least 2 calibration points")
+                    else:
+                        # Create preview plot
+                        fig_cal = go.Figure()
+                        
+                        # Calibration points
+                        fig_cal.add_trace(go.Scatter(
+                            x=scanned, 
+                            y=real,
+                            mode='markers',
+                            name='Calibration Points',
+                            marker=dict(size=10, color='red', symbol='circle')
+                        ))
+                        
+                        # Fitted curve
+                        if len(scanned) >= 3:
+                            cal_func = interp1d(scanned, real, kind='cubic', fill_value='extrapolate')
+                        else:
+                            cal_func = interp1d(scanned, real, kind='linear', fill_value='extrapolate')
+                        
+                        x_fit = np.linspace(scanned.min(), scanned.max(), 200)
+                        y_fit = cal_func(x_fit)
+                        
+                        fig_cal.add_trace(go.Scatter(
+                            x=x_fit, 
+                            y=y_fit,
+                            mode='lines',
+                            name='Interpolation Curve',
+                            line=dict(color='blue', width=2)
+                        ))
+                        
+                        # 1:1 reference line
+                        ref_min = min(scanned.min(), real.min())
+                        ref_max = max(scanned.max(), real.max())
+                        fig_cal.add_trace(go.Scatter(
+                            x=[ref_min, ref_max],
+                            y=[ref_min, ref_max],
+                            mode='lines',
+                            name='1:1 Reference',
+                            line=dict(dash='dash', color='gray', width=1)
+                        ))
+                        
+                        fig_cal.update_layout(
+                            xaxis_title="Scanned Wavenumber (cm⁻¹)",
+                            yaxis_title="Real Wavenumber (cm⁻¹)",
+                            title="Wavenumber Calibration Curve",
+                            height=400,
+                            showlegend=True
+                        )
+                        
+                        st.plotly_chart(fig_cal, use_container_width=True)
+                        
+                        # Show offset statistics
+                        offset = real - scanned
+                        st.markdown(f"""
+                        **Calibration Statistics:**
+                        - Points: {len(scanned)}
+                        - Offset range: {offset.min():.2f} to {offset.max():.2f} cm⁻¹
+                        - Mean offset: {offset.mean():.2f} cm⁻¹
+                        - Interpolation: {'Cubic spline' if len(scanned) >= 3 else 'Linear'}
+                        """)
+                        
+                except Exception as e:
+                    st.error(f"Error creating preview: {e}")
+        
+        with col2:
+            if st.button("💾 Download Calibration CSV", use_container_width=True):
+                # Save edited table to session state
+                st.session_state["calibration_table"] = edited_table
+                csv_data = edited_table.to_csv(index=False)
+                st.download_button(
+                    label="📥 Download",
+                    data=csv_data,
+                    file_name="wavenumber_calibration.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+        
+        with col3:
+            if st.button("✅ Apply Calibration", use_container_width=True):
+                # Save edited table to session state
+                st.session_state["calibration_table"] = edited_table
+                try:
+                    scanned = edited_table["Scanned_cm-1"].values
+                    real = edited_table["Real_cm-1"].values
+                    
+                    if len(scanned) < 2:
+                        st.error("Need at least 2 calibration points")
+                    else:
+                        # Auto-extend calibration range if needed
+                        current_min = scanned.min()
+                        current_max = scanned.max()
+                        
+                        # Add points with margin beyond current range
+                        margin = (current_max - current_min) * 0.1
+                        new_min = current_min - max(50, margin)
+                        new_max = current_max + max(50, margin)
+                        
+                        # Round to nearest 50
+                        new_min = np.floor(new_min / 50) * 50
+                        new_max = np.ceil(new_max / 50) * 50
+                        
+                        # Create interpolation function for extrapolation
+                        extrap_func = interp1d(scanned, real, kind='linear', fill_value='extrapolate')
+                        
+                        # Build extended calibration points
+                        new_rows = []
+                        if new_min < current_min:
+                            new_min_real = float(extrap_func(new_min))
+                            new_rows.append({"Scanned_cm-1": new_min, "Real_cm-1": new_min_real})
+                        
+                        # Add existing points
+                        for i in range(len(scanned)):
+                            new_rows.append({"Scanned_cm-1": scanned[i], "Real_cm-1": real[i]})
+                        
+                        if new_max > current_max:
+                            new_max_real = float(extrap_func(new_max))
+                            new_rows.append({"Scanned_cm-1": new_max, "Real_cm-1": new_max_real})
+                        
+                        # Update table with extended points
+                        extended_df = pd.DataFrame(new_rows)
+                        st.session_state["calibration_table"] = extended_df
+                        
+                        # Create final interpolation function with extended range
+                        scanned_ext = extended_df["Scanned_cm-1"].values
+                        real_ext = extended_df["Real_cm-1"].values
+                        
+                        if len(scanned_ext) >= 3:
+                            cal_func = interp1d(scanned_ext, real_ext, kind='cubic', fill_value='extrapolate', bounds_error=False)
+                        else:
+                            cal_func = interp1d(scanned_ext, real_ext, kind='linear', fill_value='extrapolate', bounds_error=False)
+                        
+                        # Store in session state
+                        st.session_state["wavenumber_calibration_func"] = cal_func
+                        st.session_state["calibration_applied"] = True
+                        
+                        if len(new_rows) > len(scanned):
+                            st.success(f"✅ Calibration applied! Auto-extended range to {new_min:.0f}-{new_max:.0f} cm⁻¹ using {len(scanned_ext)} points.")
+                        else:
+                            st.success(f"✅ Calibration applied! Using {len(scanned_ext)} points with {'cubic' if len(scanned_ext) >= 3 else 'linear'} interpolation")
+                        
+                except Exception as e:
+                    st.error(f"Error applying calibration: {e}")
+    else:
+        # Clear calibration if toggle is off
+        if "wavenumber_calibration_func" in st.session_state:
+            del st.session_state["wavenumber_calibration_func"]
+        if "calibration_applied" in st.session_state:
+            del st.session_state["calibration_applied"]
 
 st.divider()
 
@@ -1487,26 +1704,54 @@ if run_button:
     
     # ---------- Tab 2: Depletion Plot ----------
     with tab2:
+        # Apply wavenumber calibration if enabled
+        x_data_dep = data[:, 0].copy()  # Original scanned wavenumbers
+        xlabel_dep = "Wavenumber (cm⁻¹)"
+        x_range_dep_cal = x_range_dep
+        
+        if st.session_state.get("use_wavenumber_calibration", False) and "wavenumber_calibration_func" in st.session_state:
+            try:
+                cal_func = st.session_state["wavenumber_calibration_func"]
+                
+                x_data_dep_temp = cal_func(x_data_dep)
+                # Calculate calibrated x-range, ensuring proper order
+                cal_min = float(cal_func(x_range_dep[0]))
+                cal_max = float(cal_func(x_range_dep[1]))
+                
+                # Validate calibrated values - check for NaN or Inf
+                if np.any(np.isnan(x_data_dep_temp)) or np.any(np.isinf(x_data_dep_temp)) or np.isnan(cal_min) or np.isnan(cal_max) or np.isinf(cal_min) or np.isinf(cal_max):
+                    raise ValueError(f"Calibration produced NaN or Inf values")
+                
+                # If valid, apply calibration
+                x_data_dep = x_data_dep_temp
+                xlabel_dep = "Calibrated Wavenumber (cm⁻¹)"
+                x_range_dep_cal = [min(cal_min, cal_max), max(cal_min, cal_max)]
+            except Exception as e:
+                st.warning(f"⚠️ Calibration error: {e}. Using original wavenumbers.")
+                x_data_dep = data[:, 0].copy()
+                xlabel_dep = "Wavenumber (cm⁻¹)"
+                x_range_dep_cal = x_range_dep
+        
         st.markdown("###### *:green[Interactive plot with plotly]*")
         fig_dep = go.Figure()
         fig_dep.add_trace(go.Scatter(
-            x=data[:, 0],
+            x=x_data_dep,
             y=data[:, 3],
             name=fullrange_depletion_data.columns[3],
             line=dict(color="#1f77b4")
         ))
         zero_line_depletion = 1
         fig_dep.add_trace(go.Scatter(
-            x=[data[0, 0], data[-1, 0]],
+            x=[x_data_dep[0], x_data_dep[-1]],
             y=[zero_line_depletion, zero_line_depletion],
             mode='lines',
             line=dict(color="lime", width=1),
             name="Zero Line"
         ))
         fig_dep.update_layout(
-            xaxis=dict(range=x_range_dep),
+            xaxis=dict(range=x_range_dep_cal),
             yaxis=dict(range=[depletion_ymin, depletion_ymax]),
-            xaxis_title="wavenumber (cm-1)",
+            xaxis_title=xlabel_dep,
             yaxis_title="Intensity",
             title=fullrange_depletion_data.columns[3] + " " + complex,
             legend=dict(x=0.8, y=0.9)
@@ -1520,10 +1765,10 @@ if run_button:
         
         st.markdown("###### *:green[Static plot with matplotlib]*")
         fig_dep_static, ax = plt.subplots(figsize=(21, 6))
-        ax.plot(data[:, 0], data[:, 3])
-        ax.scatter(data[:, 0], data[:, 3])
+        ax.plot(x_data_dep, data[:, 3])
+        ax.scatter(x_data_dep, data[:, 3])
         ax.legend([fullrange_depletion_data.columns[3]], fontsize=5, loc="upper right")
-        ax.hlines(zero_line_depletion, xmin=depletion_xmin, xmax=depletion_xmax, color="lime")
+        ax.hlines(zero_line_depletion, xmin=x_range_dep_cal[0], xmax=x_range_dep_cal[1], color="lime")
         mass_label = [round(item, 2) for item in list_mass_isotope]
         textstr = (f"Complex: {complex} \nMass peaks: {mass_label} amu \nIntegration width = {isotope_scan_width} amu\n"
                    f"Baseline reference: {baseline_reference} amu \nBaseline width = {baseline_width} amu")
@@ -1531,8 +1776,8 @@ if run_button:
         ax.text(0.6, 0.25, textstr, transform=plt.gca().transAxes, fontsize=5,
                 verticalalignment='top', bbox=props)
         ax.set_ylim(depletion_ymin, depletion_ymax)
-        ax.set_xlim(depletion_xmin, depletion_xmax)
-        ax.set_xlabel("wavenumber (cm-1)")
+        ax.set_xlim(x_range_dep_cal[0], x_range_dep_cal[1])
+        ax.set_xlabel(xlabel_dep)
         st.pyplot(fig_dep_static)
         
         # Add to Report button
@@ -1549,26 +1794,53 @@ if run_button:
     
     # ---------- Tab 3: -ln(Depletion) Plot ----------
     with tab3:
+        # Apply wavenumber calibration if enabled (reuse from tab2)
+        x_data_ln = data[:, 0].copy()
+        xlabel_ln = "Wavenumber (cm⁻¹)"
+        x_range_ln_cal = x_range_dep
+        
+        if st.session_state.get("use_wavenumber_calibration", False) and "wavenumber_calibration_func" in st.session_state:
+            try:
+                cal_func = st.session_state["wavenumber_calibration_func"]
+                x_data_ln_temp = cal_func(x_data_ln)
+                # Calculate calibrated x-range, ensuring proper order
+                cal_min = float(cal_func(x_range_dep[0]))
+                cal_max = float(cal_func(x_range_dep[1]))
+                
+                # Validate calibrated values - check for NaN or Inf
+                if np.any(np.isnan(x_data_ln_temp)) or np.any(np.isinf(x_data_ln_temp)) or np.isnan(cal_min) or np.isnan(cal_max) or np.isinf(cal_min) or np.isinf(cal_max):
+                    raise ValueError("Calibration produced NaN or Inf values")
+                
+                # If valid, apply calibration
+                x_data_ln = x_data_ln_temp
+                xlabel_ln = "Calibrated Wavenumber (cm⁻¹)"
+                x_range_ln_cal = [min(cal_min, cal_max), max(cal_min, cal_max)]
+            except Exception as e:
+                st.warning(f"⚠️ Calibration error in ln(depletion) plot: {e}. Using original wavenumbers.")
+                x_data_ln = data[:, 0].copy()
+                xlabel_ln = "Wavenumber (cm⁻¹)"
+                x_range_ln_cal = x_range_dep
+        
         st.markdown("###### *:green[Interactive plot with plotly]*")
         fig_ln = go.Figure()
         fig_ln.add_trace(go.Scatter(
-            x=data[:, 0],
+            x=x_data_ln,
             y=data[:, 4],
             name=fullrange_depletion_data.columns[4],
             line=dict(color="#1f77b4")
         ))
         zero_line_ln = 0
         fig_ln.add_trace(go.Scatter(
-            x=[data[0, 0], data[-1, 0]],
+            x=[x_data_ln[0], x_data_ln[-1]],
             y=[zero_line_ln, zero_line_ln],
             mode='lines',
             line=dict(color="lime", width=1),
             name="Zero Line"
         ))
         fig_ln.update_layout(
-            xaxis=dict(range=x_range_dep),
+            xaxis=dict(range=x_range_ln_cal),
             yaxis=dict(range=[ln_depletion_ymin, ln_depletion_ymax]),
-            xaxis_title="wavenumber (cm-1)",
+            xaxis_title=xlabel_ln,
             yaxis_title="Intensity",
             title=fullrange_depletion_data.columns[4] + " " + complex,
             legend=dict(x=0.8, y=0.9)
@@ -1582,10 +1854,10 @@ if run_button:
         
         st.markdown("###### *:green[Static plot with matplotlib]*")
         fig_ln_static, ax = plt.subplots(figsize=(21, 6))
-        ax.plot(data[:, 0], data[:, 4])
-        ax.scatter(data[:, 0], data[:, 4])
+        ax.plot(x_data_ln, data[:, 4])
+        ax.scatter(x_data_ln, data[:, 4])
         ax.legend([fullrange_depletion_data.columns[4]], fontsize=5, loc="lower right")
-        ax.hlines(zero_line_ln, xmin=depletion_xmin, xmax=depletion_xmax, color="lime")
+        ax.hlines(zero_line_ln, xmin=x_range_ln_cal[0], xmax=x_range_ln_cal[1], color="lime")
         mass_label = [round(item, 2) for item in list_mass_isotope]
         textstr = (f"Complex: {complex} \nMass peaks: {mass_label} amu \nIntegration width = {isotope_scan_width} amu\n"
                    f"Baseline reference: {baseline_reference} amu \nBaseline width = {baseline_width} amu")
@@ -1593,8 +1865,8 @@ if run_button:
         ax.text(0.01, 0.99, textstr, transform=plt.gca().transAxes, fontsize=5,
                 verticalalignment='top', bbox=props)
         ax.set_ylim(ln_depletion_ymin, ln_depletion_ymax)
-        ax.set_xlim(depletion_xmin, depletion_xmax)
-        ax.set_xlabel("wavenumber (cm-1)")
+        ax.set_xlim(x_range_ln_cal[0], x_range_ln_cal[1])
+        ax.set_xlabel(xlabel_ln)
         st.pyplot(fig_ln_static)
         
         # Add to Report button
