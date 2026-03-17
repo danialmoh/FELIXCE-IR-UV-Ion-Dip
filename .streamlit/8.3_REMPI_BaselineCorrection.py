@@ -542,75 +542,11 @@ if "rempi_baseline_corrected" in st.session_state:
                         st.warning(f"Could not parse wavelength from column: {col}")
             wavelengths = np.array(wavelengths)
             
-            # Create heatmap
-            fig_2d = go.Figure(data=go.Heatmap(
-                z=Z,
-                x=x_mass,
-                y=wavelengths,
-                colorscale='Hot',
-                colorbar=dict(title="Intensity (a.u.)"),
-                hoverongaps=False,
-                hovertemplate='Wavelength: %{y:.2f} nm<br>Mass: %{x:.2f} amu<br>Intensity: %{z:.4f}<extra></extra>'
-            ))
-            
-            # Add molecule mass line if available
-            molecule_mass = st.session_state.get("rempi_molecule_mass", None)
-            if molecule_mass:
-                fig_2d.add_vline(
-                    x=molecule_mass,
-                    line_width=2,
-                    line_dash="dash",
-                    line_color="cyan",
-                    annotation_text=f"Parent: {molecule_mass} amu",
-                    annotation_position="top right"
-                )
-            
-            fig_2d.update_layout(
-                title="2D REMPI Action Spectrum",
-                xaxis_title="Mass (amu)",
-                yaxis_title="Wavelength (nm)",
-                height=600,
-                xaxis=dict(showgrid=False),
-                yaxis=dict(showgrid=False)
-            )
-            
-            st.plotly_chart(fig_2d, use_container_width=True)
-            
-            # Export options for full heatmap
-            col_exp_2d1, col_exp_2d2 = st.columns(2)
-            with col_exp_2d1:
-                if st.button("💾 Save Full Heatmap as PNG", key="save_2d_full"):
-                    import plotly.io as pio
-                    file_directory = st.session_state.get("rempi_file_directory", "")
-                    if file_directory:
-                        output_path = Path(file_directory) / "output"
-                        output_path.mkdir(parents=True, exist_ok=True)
-                        filepath = output_path / "REMPI_2D_heatmap_full.png"
-                        pio.write_image(fig_2d, str(filepath), width=1400, height=800)
-                        st.success(f"✅ Saved to `{filepath}`")
-                    else:
-                        st.warning("No output directory set")
-            with col_exp_2d2:
-                if st.button("📊 Add Full Heatmap to Report", key="report_2d_full"):
-                    # Convert to matplotlib
-                    import matplotlib.pyplot as plt
-                    fig_mpl, ax = plt.subplots(figsize=(12, 6))
-                    im = ax.pcolormesh(x_mass, wavelengths, Z, cmap='hot', shading='auto')
-                    ax.set_xlabel('Mass (amu)', fontsize=12)
-                    ax.set_ylabel('Wavelength (nm)', fontsize=12)
-                    ax.set_title('2D REMPI Action Spectrum', fontsize=14)
-                    plt.colorbar(im, ax=ax, label='Intensity (a.u.)')
-                    
-                    add_plot_to_report_button(
-                        fig_mpl,
-                        "2D REMPI Action Spectrum (Full)",
-                        key_suffix="rempi_2d_full",
-                        description="2D wavelength vs mass heatmap showing resonant transitions"
-                    )
-                    plt.close(fig_mpl)
-            
             # Use preset mass range for zoomed view
-            st.markdown("#### Zoomed View (using range settings above)")
+            st.markdown("#### 2D REMPI Action Spectrum (Mass Range)")
+            
+            # Get molecule mass for reference line
+            molecule_mass = st.session_state.get("rempi_molecule_mass", None)
             
             # Filter by mass range using preset values
             mass_indices = np.where((x_mass >= mass_min_2d) & (x_mass <= mass_max_2d))[0]
@@ -618,6 +554,9 @@ if "rempi_baseline_corrected" in st.session_state:
             if len(mass_indices) > 0:
                 Z_filtered = Z[:, mass_indices]
                 x_mass_filtered = x_mass[mass_indices]
+                
+                # Get wavelength range
+                wl_min, wl_max = wavelengths.min(), wavelengths.max()
                 
                 fig_zoom = go.Figure(data=go.Heatmap(
                     z=Z_filtered,
@@ -637,7 +576,7 @@ if "rempi_baseline_corrected" in st.session_state:
                     )
                 
                 fig_zoom.update_layout(
-                    title=f"2D REMPI Action Spectrum (Mass: {mass_min_2d:.1f}-{mass_max_2d:.1f} amu)",
+                    title=f"2D REMPI Action Spectrum (Mass: {mass_min_2d:.1f}-{mass_max_2d:.1f} amu, λ: {wl_min:.1f}-{wl_max:.1f} nm)",
                     xaxis_title="Mass (amu)",
                     yaxis_title="Wavelength (nm)",
                     height=600,
@@ -656,7 +595,7 @@ if "rempi_baseline_corrected" in st.session_state:
                         if file_directory:
                             output_path = Path(file_directory) / "output"
                             output_path.mkdir(parents=True, exist_ok=True)
-                            filepath = output_path / f"REMPI_2D_heatmap_zoom_{mass_min_2d:.0f}-{mass_max_2d:.0f}amu.png"
+                            filepath = output_path / f"REMPI_2D_heatmap_{mass_min_2d:.0f}-{mass_max_2d:.0f}amu_{wl_min:.0f}-{wl_max:.0f}nm.png"
                             pio.write_image(fig_zoom, str(filepath), width=1400, height=800)
                             st.success(f"✅ Saved to `{filepath}`")
                         else:
@@ -669,14 +608,14 @@ if "rempi_baseline_corrected" in st.session_state:
                         im = ax.pcolormesh(x_mass_filtered, wavelengths, Z_filtered, cmap='hot', shading='auto')
                         ax.set_xlabel('Mass (amu)', fontsize=12)
                         ax.set_ylabel('Wavelength (nm)', fontsize=12)
-                        ax.set_title(f'2D REMPI Action Spectrum ({mass_min_2d:.1f}-{mass_max_2d:.1f} amu)', fontsize=14)
+                        ax.set_title(f'2D REMPI Action Spectrum ({mass_min_2d:.1f}-{mass_max_2d:.1f} amu, λ: {wl_min:.1f}-{wl_max:.1f} nm)', fontsize=14)
                         plt.colorbar(im, ax=ax, label='Intensity (a.u.)')
                         
                         add_plot_to_report_button(
                             fig_mpl,
-                            f"2D REMPI Action Spectrum (Zoom: {mass_min_2d:.1f}-{mass_max_2d:.1f} amu)",
+                            f"2D REMPI Action Spectrum ({mass_min_2d:.1f}-{mass_max_2d:.1f} amu, λ: {wl_min:.1f}-{wl_max:.1f} nm)",
                             key_suffix="rempi_2d_zoom",
-                            description=f"Zoomed 2D heatmap for mass range {mass_min_2d:.1f}-{mass_max_2d:.1f} amu"
+                            description=f"2D heatmap for mass range {mass_min_2d:.1f}-{mass_max_2d:.1f} amu and wavelength {wl_min:.1f}-{wl_max:.1f} nm"
                         )
                         plt.close(fig_mpl)
     

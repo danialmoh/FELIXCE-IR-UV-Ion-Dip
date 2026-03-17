@@ -4,6 +4,7 @@ numpy
 pandas
 matplotlib
 plotly
+kaleido
 scipy
 h5py
 pybaselines
