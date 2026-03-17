@@ -619,6 +619,392 @@ if "rempi_baseline_corrected" in st.session_state:
                         )
                         plt.close(fig_mpl)
     
+    # Peak-Based Normalized Heatmap
+    st.markdown("---")
+    st.markdown("### 🎯 Peak-Based Normalized Heatmap")
+    st.caption("Automatically detect mass peaks and normalize each peak independently for clearer visualization")
+    
+    # Check if we have the necessary data
+    if "rempi_baseline_corrected" in st.session_state and "rempi_x_mass" in st.session_state:
+        corrected_df = st.session_state["rempi_baseline_corrected"]
+        x_mass = st.session_state["rempi_x_mass"]
+        summed_spectrum = corrected_df["Summed"].values
+        
+        # UI Controls
+        col_prom, col_range = st.columns(2)
+        with col_prom:
+            max_intensity = float(summed_spectrum.max())
+            min_prominence = st.slider(
+                "Minimum Peak Prominence",
+                min_value=0.0,
+                max_value=max_intensity,
+                value=max_intensity * 0.05,
+                step=0.1,
+                help="How much a peak must stand out from surrounding baseline (higher = more selective)"
+            )
+        
+        with col_range:
+            delta_m = st.number_input(
+                "Mass Range Width (±amu)",
+                min_value=0.01,
+                max_value=5.0,
+                value=0.5,
+                step=0.1,
+                help="Range around each detected peak to include in normalization"
+            )
+        
+        # Mass range cutoff for normalized heatmap
+        st.markdown("#### Mass Range for Normalized Heatmap")
+        col_mass_min, col_mass_max = st.columns(2)
+        with col_mass_min:
+            mass_min_norm = st.number_input(
+                "Min Mass (amu)",
+                min_value=float(x_mass.min()),
+                max_value=float(x_mass.max()),
+                value=float(x_mass.min()),
+                step=1.0,
+                key="norm_mass_min"
+            )
+        with col_mass_max:
+            mass_max_norm = st.number_input(
+                "Max Mass (amu)",
+                min_value=float(x_mass.min()),
+                max_value=float(x_mass.max()),
+                value=float(x_mass.max()),
+                step=1.0,
+                key="norm_mass_max"
+            )
+        
+        # Detect peaks button
+        if st.button("🔍 Detect Peaks & Preview", use_container_width=True):
+            from scipy.signal import find_peaks
+            
+            # Detect peaks
+            # Calculate distance parameter (minimum number of indices between peaks)
+            mass_step = x_mass[1] - x_mass[0]
+            distance_value = max(1, int(2 * delta_m / mass_step))  # Ensure at least 1
+            
+            peaks_indices, properties = find_peaks(
+                summed_spectrum,
+                prominence=min_prominence,
+                distance=distance_value
+            )
+            
+            if len(peaks_indices) == 0:
+                st.warning("No peaks detected. Try lowering the prominence value.")
+            else:
+                peak_masses = x_mass[peaks_indices]
+                peak_intensities = summed_spectrum[peaks_indices]
+                
+                # Get prominences from scipy output
+                peak_prominences = properties.get('prominences', np.array([]))
+                
+                # Filter peaks by mass range cutoff
+                mass_mask = (peak_masses >= mass_min_norm) & (peak_masses <= mass_max_norm)
+                peak_masses = peak_masses[mass_mask]
+                peak_intensities = peak_intensities[mass_mask]
+                peak_prominences_filtered = peak_prominences[mass_mask] if len(peak_prominences) > 0 else np.array([])
+                
+                if len(peak_masses) == 0:
+                    st.warning(f"No peaks detected in mass range {mass_min_norm:.1f}-{mass_max_norm:.1f} amu. Try adjusting the range or threshold.")
+                    st.session_state.pop("peak_detection", None)  # Clear previous detection
+                else:
+                    # Define mass ranges
+                    peak_ranges = []
+                    for peak_mass in peak_masses:
+                        mass_min = peak_mass - delta_m
+                        mass_max = peak_mass + delta_m
+                        peak_ranges.append((mass_min, mass_max))
+                    
+                    # Store in session state
+                    st.session_state["peak_detection"] = {
+                        "peak_masses": peak_masses,
+                        "peak_intensities": peak_intensities,
+                        "peak_ranges": peak_ranges,
+                        "peak_prominences": peak_prominences_filtered,
+                        "delta_m": delta_m,
+                        "min_prominence": min_prominence,
+                        "mass_min_norm": mass_min_norm,
+                        "mass_max_norm": mass_max_norm
+                    }
+                    
+                    st.success(f"✅ Detected {len(peak_masses)} peaks in mass range {mass_min_norm:.1f}-{mass_max_norm:.1f} amu")
+        
+        # Display preview if peaks were detected
+        if "peak_detection" in st.session_state:
+            peak_data = st.session_state["peak_detection"]
+            peak_masses = peak_data["peak_masses"]
+            peak_intensities = peak_data["peak_intensities"]
+            peak_ranges = peak_data["peak_ranges"]
+            
+            # Preview plot
+            st.markdown("#### Detected Peaks Preview")
+            fig_preview = go.Figure()
+            
+            # Summed spectrum
+            fig_preview.add_trace(go.Scatter(
+                x=x_mass,
+                y=summed_spectrum,
+                mode='lines',
+                name='Summed Spectrum',
+                line=dict(color='blue')
+            ))
+            
+            # Peak markers
+            fig_preview.add_trace(go.Scatter(
+                x=peak_masses,
+                y=peak_intensities,
+                mode='markers',
+                name='Detected Peaks',
+                marker=dict(color='red', size=10, symbol='x')
+            ))
+            
+            # Shaded regions for mass ranges
+            for i, (mass_min, mass_max) in enumerate(peak_ranges):
+                fig_preview.add_vrect(
+                    x0=mass_min,
+                    x1=mass_max,
+                    fillcolor="cyan",
+                    opacity=0.2,
+                    layer="below",
+                    annotation_text=f"{peak_masses[i]:.1f}",
+                    annotation_position="top"
+                )
+            
+            # Prominence reference line (showing minimum)
+            min_prominence_val = peak_data.get("min_prominence", 0)
+            if min_prominence_val > 0:
+                fig_preview.add_annotation(
+                    text=f"Min Prominence: {min_prominence_val:.2f}",
+                    xref="paper", yref="paper",
+                    x=0.02, y=0.98,
+                    showarrow=False,
+                    bgcolor="rgba(255,255,255,0.8)",
+                    bordercolor="red",
+                    borderwidth=1
+                )
+            
+            fig_preview.update_layout(
+                title="Peak Detection Preview",
+                xaxis_title="Mass (amu)",
+                yaxis_title="Intensity (a.u.)",
+                height=400,
+                showlegend=True
+            )
+            
+            st.plotly_chart(fig_preview, use_container_width=True)
+            
+            # Show peak table
+            peak_table = pd.DataFrame({
+                "Peak #": range(1, len(peak_masses) + 1),
+                "Mass (amu)": peak_masses,
+                "Intensity": peak_intensities,
+                "Range Min": [r[0] for r in peak_ranges],
+                "Range Max": [r[1] for r in peak_ranges]
+            })
+            st.dataframe(peak_table, use_container_width=True)
+            
+            # Normalization method selection
+            st.markdown("#### Normalization Method")
+            norm_method = st.radio(
+                "Choose normalization approach:",
+                options=["Global", "Prominence-Weighted"],
+                index=0,
+                horizontal=True,
+                help="Global: preserves relative peak intensities. Prominence-Weighted: scales peaks by their prominence."
+            )
+            
+            # Generate normalized heatmap button
+            if st.button("🎨 Generate Peak-Normalized Heatmap", use_container_width=True):
+                # Get the 2D data
+                if "rempi_compiled_dataframe" in st.session_state:
+                    compiled_df = st.session_state["rempi_compiled_dataframe"]
+                    
+                    # Extract wavelength columns
+                    wavelength_cols = [col for col in compiled_df.columns if col not in ['Mass', 'Summed']]
+                    
+                    # Build 2D array
+                    Z = compiled_df[wavelength_cols].values.T
+                    
+                    # Extract wavelengths
+                    wavelengths = []
+                    for col in wavelength_cols:
+                        col_str = str(col)
+                        try:
+                            wavelengths.append(float(col_str))
+                        except ValueError:
+                            import re
+                            match = re.search(r'[\d.]+', col_str)
+                            if match:
+                                wavelengths.append(float(match.group()))
+                    wavelengths = np.array(wavelengths)
+                    
+                    # Create normalized heatmap
+                    Z_normalized = np.zeros_like(Z)
+                    
+                    if norm_method == "Global":
+                        # Option 1: Global normalization across all peaks
+                        # Find global min/max across all peak regions
+                        all_peak_data = []
+                        for mass_min, mass_max in peak_ranges:
+                            mask = (x_mass >= mass_min) & (x_mass <= mass_max)
+                            if np.any(mask):
+                                all_peak_data.append(Z[:, mask])
+                        
+                        if all_peak_data:
+                            all_peak_data = np.concatenate(all_peak_data, axis=1)
+                            global_min = all_peak_data.min()
+                            global_max = all_peak_data.max()
+                            
+                            # Apply global normalization to each peak
+                            for mass_min, mass_max in peak_ranges:
+                                mask = (x_mass >= mass_min) & (x_mass <= mass_max)
+                                if np.any(mask):
+                                    Z_slice = Z[:, mask]
+                                    if global_max > global_min:
+                                        Z_normalized[:, mask] = (Z_slice - global_min) / (global_max - global_min)
+                    
+                    else:  # Prominence-Weighted
+                        # Option 3: Scale by prominence factor
+                        # Get prominences from session state
+                        peak_prominences_filtered = peak_data.get('peak_prominences', None)
+                        if peak_prominences_filtered is not None and len(peak_prominences_filtered) > 0:
+                            max_prominence = peak_prominences_filtered.max()
+                            
+                            for i, (mass_min, mass_max) in enumerate(peak_ranges):
+                                mask = (x_mass >= mass_min) & (x_mass <= mass_max)
+                                if np.any(mask):
+                                    Z_slice = Z[:, mask]
+                                    
+                                    # Normalize this slice independently
+                                    slice_min = Z_slice.min()
+                                    slice_max = Z_slice.max()
+                                    
+                                    if slice_max > slice_min and i < len(peak_prominences_filtered):
+                                        normalized_slice = (Z_slice - slice_min) / (slice_max - slice_min)
+                                        # Weight by prominence
+                                        prominence_factor = peak_prominences_filtered[i] / max_prominence
+                                        Z_normalized[:, mask] = normalized_slice * prominence_factor
+                        else:
+                            # Fallback if prominences not available
+                            st.warning("Prominence data not available. Using global normalization instead.")
+                            # Apply simple global normalization as fallback
+                            all_peak_data = []
+                            for mass_min, mass_max in peak_ranges:
+                                mask = (x_mass >= mass_min) & (x_mass <= mass_max)
+                                if np.any(mask):
+                                    all_peak_data.append(Z[:, mask])
+                            
+                            if all_peak_data:
+                                all_peak_data = np.concatenate(all_peak_data, axis=1)
+                                global_min = all_peak_data.min()
+                                global_max = all_peak_data.max()
+                                
+                                for mass_min, mass_max in peak_ranges:
+                                    mask = (x_mass >= mass_min) & (x_mass <= mass_max)
+                                    if np.any(mask):
+                                        Z_slice = Z[:, mask]
+                                        if global_max > global_min:
+                                            Z_normalized[:, mask] = (Z_slice - global_min) / (global_max - global_min)
+                    
+                    # Store in session state
+                    st.session_state["peak_normalized_heatmap"] = {
+                        "Z_normalized": Z_normalized,
+                        "x_mass": x_mass,
+                        "wavelengths": wavelengths,
+                        "peak_ranges": peak_ranges,
+                        "peak_masses": peak_masses
+                    }
+                    
+                    st.success("✅ Peak-normalized heatmap generated!")
+            
+            # Display normalized heatmap if generated
+            if "peak_normalized_heatmap" in st.session_state:
+                heatmap_data = st.session_state["peak_normalized_heatmap"]
+                Z_normalized_full = heatmap_data["Z_normalized"]
+                x_mass_heat_full = heatmap_data["x_mass"]
+                wavelengths_heat = heatmap_data["wavelengths"]
+                peak_ranges_heat = heatmap_data["peak_ranges"]
+                peak_masses_heat = heatmap_data["peak_masses"]
+                
+                # Get mass range from peak detection
+                mass_min_display = peak_data.get("mass_min_norm", x_mass_heat_full.min())
+                mass_max_display = peak_data.get("mass_max_norm", x_mass_heat_full.max())
+                
+                # Filter heatmap data by mass range
+                mass_mask_display = (x_mass_heat_full >= mass_min_display) & (x_mass_heat_full <= mass_max_display)
+                Z_normalized = Z_normalized_full[:, mass_mask_display]
+                x_mass_heat = x_mass_heat_full[mass_mask_display]
+                
+                wl_min, wl_max = wavelengths_heat.min(), wavelengths_heat.max()
+                
+                st.markdown("#### Peak-Normalized 2D Heatmap")
+                
+                fig_norm = go.Figure(data=go.Heatmap(
+                    z=Z_normalized,
+                    x=x_mass_heat,
+                    y=wavelengths_heat,
+                    colorscale='Hot',
+                    colorbar=dict(title="Normalized Intensity"),
+                    hovertemplate='Wavelength: %{y:.2f} nm<br>Mass: %{x:.2f} amu<br>Intensity: %{z:.4f}<extra></extra>'
+                ))
+                
+                # Add mass labels with arrows at top
+                for peak_mass in peak_masses_heat:
+                    fig_norm.add_annotation(
+                        x=peak_mass,
+                        y=1,
+                        yref="paper",
+                        text=f"{peak_mass:.1f}",
+                        showarrow=True,
+                        arrowhead=2,
+                        arrowsize=1,
+                        arrowwidth=2,
+                        arrowcolor="cyan",
+                        ax=0,
+                        ay=-30,
+                        font=dict(size=10, color="cyan"),
+                        bgcolor="rgba(0,0,0,0.7)",
+                        bordercolor="cyan",
+                        borderwidth=1
+                    )
+                
+                fig_norm.update_layout(
+                    title=f"Peak-Normalized 2D REMPI Spectrum ({len(peak_masses_heat)} peaks, Mass: {mass_min_display:.1f}-{mass_max_display:.1f} amu, λ: {wl_min:.1f}-{wl_max:.1f} nm)",
+                    xaxis_title="Mass (amu)",
+                    yaxis_title="Wavelength (nm)",
+                    height=600,
+                    xaxis=dict(showgrid=False),
+                    yaxis=dict(showgrid=False)
+                )
+                
+                st.plotly_chart(fig_norm, use_container_width=True)
+                
+                # Export options
+                col_exp_norm1, col_exp_norm2 = st.columns(2)
+                with col_exp_norm2:
+                    if st.button("📊 Add Normalized Heatmap to Report", key="report_peak_norm"):
+                        import matplotlib.pyplot as plt
+                        fig_mpl, ax = plt.subplots(figsize=(12, 6))
+                        im = ax.pcolormesh(x_mass_heat, wavelengths_heat, Z_normalized, cmap='hot', shading='auto')
+                        ax.set_xlabel('Mass (amu)', fontsize=12)
+                        ax.set_ylabel('Wavelength (nm)', fontsize=12)
+                        ax.set_title(f'Peak-Normalized 2D REMPI Spectrum ({len(peak_masses_heat)} peaks)', fontsize=14)
+                        
+                        # Add vertical lines at peaks
+                        for peak_mass in peak_masses_heat:
+                            ax.axvline(x=peak_mass, color='cyan', linestyle=':', linewidth=1, alpha=0.5)
+                        
+                        plt.colorbar(im, ax=ax, label='Normalized Intensity')
+                        
+                        add_plot_to_report_button(
+                            fig_mpl,
+                            f"Peak-Normalized 2D REMPI Spectrum ({len(peak_masses_heat)} peaks, λ: {wl_min:.1f}-{wl_max:.1f} nm)",
+                            key_suffix="rempi_peak_norm",
+                            description=f"Peak-based normalized heatmap with {len(peak_masses_heat)} detected peaks, each normalized independently"
+                        )
+                        plt.close(fig_mpl)
+    
     # 1D Action Spectrum for specific mass channel
     st.markdown("---")
     st.markdown("### 1D Action Spectrum (Single Mass Channel)")
