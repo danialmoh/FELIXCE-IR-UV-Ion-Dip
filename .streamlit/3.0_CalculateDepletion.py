@@ -1492,6 +1492,48 @@ if run_button:
             "norm_intensity": data[:, 3] / np.max(data[:, 3])
         })
         st.write("Experimental spectrum preview:", exp_df.head())
+        
+        # Auto-calculate default axis ranges from data if not already set
+        if st.session_state.get("mass_xmin") is None:
+            st.session_state["mass_xmin"] = float(st.session_state.get("x_mass", [0]).min())
+        if st.session_state.get("mass_xmax") is None:
+            st.session_state["mass_xmax"] = float(st.session_state.get("x_mass", [200]).max())
+        if st.session_state.get("mass_ymax") is None:
+            # Get max from both IR and non-IR signals
+            try:
+                plot_wn = st.session_state.get("plot_wavenumber")
+                if plot_wn and plot_wn in compilation_baseline_corrected_data:
+                    col_withIR = st.session_state.get("plot_columnIndex_withIR", -1)
+                    col_withoutIR = st.session_state.get("plot_columnIndex_withoutIR", -2)
+                    max_val = max(
+                        compilation_baseline_corrected_data[plot_wn].iloc[:, col_withIR].max(),
+                        compilation_baseline_corrected_data[plot_wn].iloc[:, col_withoutIR].max()
+                    )
+                    st.session_state["mass_ymax"] = float(max_val * 1.1)
+            except:
+                pass
+        
+        if st.session_state.get("depletion_xmin") == 0.0:
+            st.session_state["depletion_xmin"] = float(data[:, 0].min())
+        if st.session_state.get("depletion_xmax") == 2000:
+            st.session_state["depletion_xmax"] = float(data[:, 0].max())
+        if st.session_state.get("depletion_ymin") is None:
+            # Use 5th percentile or slightly below zero for better zoom
+            dep_min = float(np.percentile(data[:, 3], 5))
+            st.session_state["depletion_ymin"] = min(dep_min, -0.1)
+        if st.session_state.get("depletion_ymax") is None:
+            # Use 95th percentile with small margin for better zoom
+            dep_max = float(np.percentile(data[:, 3], 95))
+            st.session_state["depletion_ymax"] = dep_max * 1.05
+        
+        if st.session_state.get("ln_depletion_ymin") is None:
+            # Use 5th percentile for better zoom
+            ln_min = float(np.percentile(data[:, 4], 5))
+            st.session_state["ln_depletion_ymin"] = ln_min
+        if st.session_state.get("ln_depletion_ymax") is None:
+            # Use 95th percentile with small margin for better zoom
+            ln_max = float(np.percentile(data[:, 4], 95))
+            st.session_state["ln_depletion_ymax"] = ln_max * 1.05
 
     
     # --- Apply smoothing if "Smoothed" is selected ---
@@ -1673,14 +1715,14 @@ if run_button:
         ax.axvline(mass_complex, alpha=0.75, linestyle="solid", linewidth=2, color="green", label=f"{complex} average mass")
         for index, isotope in enumerate(list_mass_isotope):
             ax.axvline(isotope, alpha=0.75, linestyle="solid", linewidth=1, color="black")
-            ax.fill_between(x_mass[list_scanwidth_isotope[index]], 0.5, color="lightgray")
+            ax.fill_between(x_mass[list_scanwidth_isotope[index]], 0, mass_ymax, color="lightgray", alpha=0.3)
         ax.axvline(0, color='black', label='Isotope peaks')
         ax.axvline(0, color='lightgray', label='scan width range')
         ax.plot(x_mass[:], compilation_baseline_corrected_data[plot_wavenumber].iloc[:, plot_columnIndex_withoutIR],
                 label=compilation_baseline_corrected_data[plot_wavenumber].columns[plot_columnIndex_withoutIR])
         ax.plot(x_mass[:], compilation_baseline_corrected_data[plot_wavenumber].iloc[:, plot_columnIndex_withIR],
                 label=compilation_baseline_corrected_data[plot_wavenumber].columns[plot_columnIndex_withIR])
-        ax.fill_between(x_mass[baseline_range_indices], 0.2, color="lightsteelblue", label="baseline range")
+        ax.fill_between(x_mass[baseline_range_indices], 0, mass_ymax, color="lightsteelblue", alpha=0.3, label="baseline range")
         ax.hlines(0, xmin=x_mass[mass_range_indices][0], xmax=x_mass[mass_range_indices][-1], color="lime")
         ax.set_xlim(mass_xmin, mass_xmax)
         ax.set_ylim(-0.001, mass_ymax)
