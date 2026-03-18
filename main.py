@@ -118,6 +118,8 @@ with st.sidebar:
             st.switch_page(".streamlit/6.0_pah_generator.py")
         if st.button("⚖️ 6.1 Data Comparison", use_container_width=True, key="btn_compare"):
             st.switch_page(".streamlit/6.1_Comparison.py")
+        if st.button("🔬 6.2 DFT Comparison", use_container_width=True, key="btn_dft"):
+            st.switch_page(".streamlit/6.2_DFT_Comparison.py")
     
     # Section 7: Laser Normalization
     with st.container(border=True):

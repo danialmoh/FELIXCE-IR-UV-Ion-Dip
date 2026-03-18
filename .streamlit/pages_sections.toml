@@ -97,6 +97,11 @@ name = "6.1 Data Comparison"
 icon = "⚖️"
 
 [[pages]]
+path = ".streamlit/6.2_DFT_Comparison.py"
+name = "6.2 DFT Comparison"
+icon = "🔬"
+
+[[pages]]
 path = ".streamlit/7.0_LaserNormalization.py"
 name = "7.0 Laser Normalization"
 icon = "✨"

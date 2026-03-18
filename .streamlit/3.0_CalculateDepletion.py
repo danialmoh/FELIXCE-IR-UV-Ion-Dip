@@ -907,6 +907,7 @@ import matplotlib.pyplot as plt
 import plotly.graph_objs as go
 import configparser
 import os
+from datetime import datetime
 from scipy.signal import savgol_filter  # Reuse your existing smoothing function
 from scipy.interpolate import interp1d  # For wavenumber calibration
 from packages.ReportManager import add_plot_to_report_button, init_report_session
@@ -1593,7 +1594,8 @@ if run_button:
 
     if save_output:
         filename_fullrange_depletion = f"fullrange_depletion_data_{complex}_{int(data[0,0])}-{int(data[-1,0])}cm⁻¹.csv"
-        filename_fullrange_depletion_both = f"fullrange_depletion_both_{complex}_{int(data[0,0])}-{int(data[-1,0])}cm⁻¹.csv"
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename_fullrange_depletion_both = f"fullrange_depletion_both_{complex}_{int(data[0,0])}-{int(data[-1,0])}cm⁻¹_{timestamp}.csv"
         export_filename_fullrange_depletion = os.path.join(file_directory, filename_fullrange_depletion)
         export_filename_fullrange_depletion_both = os.path.join(file_directory, filename_fullrange_depletion_both)
         fullrange_depletion_data.to_csv(export_filename_fullrange_depletion, index=False)
@@ -1705,7 +1707,8 @@ if run_button:
         )
         st.plotly_chart(fig)
         if save_output:
-            html_filename = f"mass_spectra_{complex}_{int(data[0,0])}-{int(data[-1,0])}.html"
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            html_filename = f"mass_spectra_{complex}_{int(data[0,0])}-{int(data[-1,0])}_{timestamp}.html"
             output_html_filename = os.path.join(file_directory, html_filename)
             fig.write_html(output_html_filename, include_plotlyjs='cdn')
             st.write(f"Interactive Mass Spectra plot saved as HTML @ {output_html_filename}")
@@ -1741,7 +1744,8 @@ if run_button:
         )
         
         if save_output:
-            output_png_filename = os.path.join(file_directory, f"mass_spectra_{complex}_{int(data[0,0])}-{int(data[-1,0])}.png")
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_png_filename = os.path.join(file_directory, f"mass_spectra_{complex}_{int(data[0,0])}-{int(data[-1,0])}_{timestamp}.png")
             fig_static.savefig(output_png_filename, dpi=300)
     
     # ---------- Tab 2: Depletion Plot ----------
@@ -1800,7 +1804,8 @@ if run_button:
         )
         st.plotly_chart(fig_dep)
         if save_output:
-            html_filename = f"depletion_{complex}_{int(data[0,0])}-{int(data[-1,0])}.html"
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            html_filename = f"depletion_{complex}_{int(data[0,0])}-{int(data[-1,0])}_{timestamp}.html"
             output_html_filename = os.path.join(file_directory, html_filename)
             fig_dep.write_html(output_html_filename, include_plotlyjs='cdn')
             st.write(f"Interactive Depletion plot saved as HTML @ {output_html_filename}")
@@ -1831,7 +1836,8 @@ if run_button:
         )
         
         if save_output:
-            output_png_filename = os.path.join(file_directory, f"depletion_{complex}_{int(data[0,0])}-{int(data[-1,0])}.png")
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_png_filename = os.path.join(file_directory, f"depletion_{complex}_{int(data[0,0])}-{int(data[-1,0])}_{timestamp}.png")
             fig_dep_static.savefig(output_png_filename, dpi=300)
     
     # ---------- Tab 3: -ln(Depletion) Plot ----------
@@ -1889,7 +1895,8 @@ if run_button:
         )
         st.plotly_chart(fig_ln)
         if save_output:
-            html_filename = f"ln_depletion_{complex}_{int(data[0,0])}-{int(data[-1,0])}.html"
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            html_filename = f"ln_depletion_{complex}_{int(data[0,0])}-{int(data[-1,0])}_{timestamp}.html"
             output_html_filename = os.path.join(file_directory, html_filename)
             fig_ln.write_html(output_html_filename, include_plotlyjs='cdn')
             st.write(f"Interactive -ln(Depletion) plot saved as HTML @ {output_html_filename}")
@@ -1920,7 +1927,8 @@ if run_button:
         )
         
         if save_output:
-            output_png_filename = os.path.join(file_directory, f"ln_depletion_{complex}_{int(data[0,0])}-{int(data[-1,0])}.png")
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_png_filename = os.path.join(file_directory, f"ln_depletion_{complex}_{int(data[0,0])}-{int(data[-1,0])}_{timestamp}.png")
             fig_ln_static.savefig(output_png_filename, dpi=300)
     
     # ---------- Tab 4: PAH Comparison ----------

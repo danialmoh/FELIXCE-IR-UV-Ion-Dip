@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 import matplotlib.pyplot as plt
+from datetime import datetime
 
 st.title("Calibrated Scans & IR Yield Aggregation")
 
@@ -93,7 +94,8 @@ if scan_files:
                 'yield_IR': yield_ir
             })
             # Save individual calibrated CSV
-            out_name = f"Calibrated_{Path(f.name).stem}.csv"
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            out_name = f"Calibrated_{Path(f.name).stem}_{timestamp}.csv"
             processed.to_csv(out_name, index=False)
             all_processed.append(processed)
 

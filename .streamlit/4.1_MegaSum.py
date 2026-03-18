@@ -140,6 +140,53 @@ if st.button("**:blue[#1]** ➕ Create a sum of all mass spectra + baseline corr
     # print(MegaSum)
 
 
+# Auto-calculate axis ranges from MegaSum data if available
+MegaSum = st.session_state.get("MegaSum", None)
+if MegaSum is not None and x_mass is not None:
+    plot_columnIndex_withoutIR = st.session_state.get("plot_columnIndex_withoutIR", -2)
+    
+    # Auto-calculate defaults if not already set
+    if st.session_state.get("MegaSum_xmin") is None:
+        st.session_state["MegaSum_xmin"] = float(x_mass.min())
+    if st.session_state.get("MegaSum_xmax") is None:
+        st.session_state["MegaSum_xmax"] = float(x_mass.max())
+    if st.session_state.get("MegaSum_ymin") is None:
+        # Use 5th percentile for better zoom
+        st.session_state["MegaSum_ymin"] = float(np.percentile(MegaSum.iloc[:, plot_columnIndex_withoutIR], 5))
+    if st.session_state.get("MegaSum_ymax") is None:
+        # Use 95th percentile with small margin
+        st.session_state["MegaSum_ymax"] = float(np.percentile(MegaSum.iloc[:, plot_columnIndex_withoutIR], 95) * 1.05)
+
+# Axis range controls
+st.markdown("#### MegaSum Plot Ranges")
+col_x, col_y = st.columns(2)
+with col_x:
+    st.session_state["MegaSum_xmin"] = float(st.number_input(
+        "X-axis min (amu)", 
+        value=st.session_state.get("MegaSum_xmin", 0.0),
+        key="megasum_x_min",
+        format="%.2f"
+    ))
+    st.session_state["MegaSum_xmax"] = float(st.number_input(
+        "X-axis max (amu)", 
+        value=st.session_state.get("MegaSum_xmax", 1300.0),
+        key="megasum_x_max",
+        format="%.2f"
+    ))
+with col_y:
+    st.session_state["MegaSum_ymin"] = float(st.number_input(
+        "Y-axis min", 
+        value=st.session_state.get("MegaSum_ymin", -0.001),
+        key="megasum_y_min",
+        format="%.4f"
+    ))
+    st.session_state["MegaSum_ymax"] = float(st.number_input(
+        "Y-axis max", 
+        value=st.session_state.get("MegaSum_ymax", 0.1),
+        key="megasum_y_max",
+        format="%.4f"
+    ))
+
 if st.button("**:blue[#3]** 📈 Plot Interactive mega sum!"):
     # Retrieve necessary variables from session_state
     x_mass = st.session_state.get("x_mass", None)
@@ -191,6 +238,29 @@ if st.button("**:blue[#3]** 📈 Plot Interactive mega sum!"):
     )
     
     st.plotly_chart(fig)
+    
+    # --- Static plot with matplotlib ---
+    st.markdown("###### *:green[Static plot with matplotlib]*")
+    fig_static, ax = plt.subplots(figsize=(8, 5))
+    ax.axhline(0, color="limegreen", linewidth=1, label="Zero line")
+    ax.plot(x_mass[:], MegaSum.iloc[:, plot_columnIndex_withoutIR], 
+            label=MegaSum.columns[plot_columnIndex_withoutIR], linewidth=1.5)
+    ax.set_xlim(MegaSum_xmin, MegaSum_xmax)
+    ax.set_ylim(MegaSum_ymin, MegaSum_ymax)
+    ax.set_xlabel("Mass (amu)", fontsize=10)
+    ax.set_ylabel("Intensity", fontsize=10)
+    ax.legend(fontsize=8)
+    ax.grid(True, alpha=0.3)
+    fig_static.tight_layout()
+    st.pyplot(fig_static)
+    
+    # Add to Report button
+    add_plot_to_report_button(
+        fig_static,
+        "MegaSum Mass Spectrum",
+        key_suffix="megasum_spectrum",
+        description="MegaSum spectrum showing combined signal across all wavenumbers"
+    )
 
 # st.markdown("#### Plot parameters")
 # col1,col2,col3,col4 = st.columns([1,1,1,1])
