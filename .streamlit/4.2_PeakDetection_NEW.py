@@ -112,16 +112,20 @@ with st.expander("🔍 Step 1: Peak Detection Parameters", expanded=False):
     
     with col1:
         if st.session_state.get("signal") is not None:
-            default_height = float(0.1 * np.max(st.session_state["signal"]))
+            max_intensity = float(np.max(st.session_state["signal"]))
+            default_prominence = max_intensity * 0.05
         else:
-            default_height = 0.01
-            
-        height_threshold = st.number_input(
-            "Minimum peak height",
-            value=st.session_state.get("height_threshold", default_height),
+            max_intensity = 1.0
+            default_prominence = 0.05
+        
+        min_prominence = st.number_input(
+            "Minimum peak prominence",
+            value=st.session_state.get("min_prominence", default_prominence),
+            min_value=0.0,
+            max_value=max_intensity,
             step=0.01,
-            key="height_threshold",
-            help="Absolute intensity threshold for peak detection"
+            key="min_prominence",
+            help="How much a peak must stand out from surrounding baseline (higher = more selective)"
         )
     
     with col2:
@@ -152,15 +156,23 @@ with st.expander("🔍 Step 1: Peak Detection Parameters", expanded=False):
             x_mass = st.session_state["x_mass"]
             
             with st.spinner("Detecting peaks..."):
-                peaks, properties = find_peaks(signal, height=height_threshold, distance=min_distance)
+                peaks, properties = find_peaks(
+                    signal, 
+                    prominence=min_prominence,
+                    distance=min_distance
+                )
                 detected_mz = np.array(x_mass)[peaks]
+                
+                # Get prominences from scipy output
+                peak_prominences = properties.get('prominences', np.array([]))
                 
                 st.success(f"✅ Detected {len(detected_mz)} peaks!")
                 
                 peaks_df = pd.DataFrame({
                     "Peak Index": peaks,
                     "m/z": detected_mz,
-                    "Intensity": signal[peaks]
+                    "Intensity": signal[peaks],
+                    "Prominence": peak_prominences if len(peak_prominences) > 0 else [np.nan] * len(peaks)
                 })
                 
                 st.dataframe(peaks_df, use_container_width=True)
@@ -485,7 +497,7 @@ with st.expander("📊 Step 3: Visualization & Plotting", expanded=False):
         
         plot_intensity_threshold = st.number_input(
             "Min intensity for annotations",
-            value=st.session_state.get("height_threshold", 0.01),
+            value=st.session_state.get("plot_intensity_threshold", 0.01),
             step=0.01,
             key="plot_intensity_threshold"
         )
