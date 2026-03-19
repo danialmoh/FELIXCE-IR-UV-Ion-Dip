@@ -14,6 +14,9 @@ __pycache__/
 input/*
 !input/.gitkeep
 output/*
+output_B/*
+output_17Mar/*
+
 !output/.gitkeep
 
 # Example data and figures
