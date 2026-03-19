@@ -1813,7 +1813,6 @@ if run_button:
         st.markdown("###### *:green[Static plot with matplotlib]*")
         fig_dep_static, ax = plt.subplots(figsize=(21, 6))
         ax.plot(x_data_dep, data[:, 3])
-        ax.scatter(x_data_dep, data[:, 3])
         ax.legend([fullrange_depletion_data.columns[3]], fontsize=5, loc="upper right")
         ax.hlines(zero_line_depletion, xmin=x_range_dep_cal[0], xmax=x_range_dep_cal[1], color="lime")
         mass_label = [round(item, 2) for item in list_mass_isotope]
@@ -1904,7 +1903,6 @@ if run_button:
         st.markdown("###### *:green[Static plot with matplotlib]*")
         fig_ln_static, ax = plt.subplots(figsize=(21, 6))
         ax.plot(x_data_ln, data[:, 4])
-        ax.scatter(x_data_ln, data[:, 4])
         ax.legend([fullrange_depletion_data.columns[4]], fontsize=5, loc="lower right")
         ax.hlines(zero_line_ln, xmin=x_range_ln_cal[0], xmax=x_range_ln_cal[1], color="lime")
         mass_label = [round(item, 2) for item in list_mass_isotope]
