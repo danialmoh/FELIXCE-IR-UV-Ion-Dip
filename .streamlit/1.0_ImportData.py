@@ -29,7 +29,52 @@ defaults = load_defaults()
 uploaded_files = st.file_uploader("Select HDF5 files to read (adds files to existing list, click `x` to remove)", accept_multiple_files=True, type=["h5"])
 st.session_state["file_directory"] = st.text_input("Enter file directory where outputs are saved.", value= st.session_state.get("file_directory", defaults['file_directory']))
 directory_input = st.session_state["file_directory"]
-st.session_state["step_size"] = st.text_input("Enter the step size of your scans.", value=st.session_state.get("step_size", defaults.get("step_size", None)))
+
+# Choose step size input mode
+st.markdown("### Step Size Configuration")
+step_size_mode = st.radio(
+    "How would you like to specify step sizes?",
+    options=["Same step size for all files", "Different step size per file"],
+    index=0,
+    help="Choose 'Different step size per file' if your scans were taken with different step sizes"
+)
+
+if step_size_mode == "Same step size for all files":
+    st.session_state["step_size"] = st.text_input("Enter the step size of your scans (cm⁻¹):", value=st.session_state.get("step_size", defaults.get("step_size", None)))
+    st.session_state["use_per_file_step_size"] = False
+else:
+    st.info("You will specify step size for each file individually below.")
+    st.session_state["use_per_file_step_size"] = True
+    
+    # Show per-file step size inputs if files are uploaded
+    if uploaded_files:
+        st.markdown("#### Specify step size for each file:")
+        
+        # Initialize step sizes dictionary if not exists
+        if "file_step_sizes" not in st.session_state:
+            st.session_state["file_step_sizes"] = {}
+        
+        for i, file in enumerate(uploaded_files):
+            # Use previous value if exists, otherwise use default
+            default_value = st.session_state["file_step_sizes"].get(file.name, defaults.get("step_size", 0.5))
+            
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.text(f"📁 {file.name}")
+            with col2:
+                step_size_value = st.number_input(
+                    f"Step size",
+                    min_value=0.1,
+                    max_value=10.0,
+                    value=float(default_value),
+                    step=0.1,
+                    format="%.1f",
+                    key=f"step_size_{i}_{file.name}",
+                    label_visibility="collapsed"
+                )
+                st.session_state["file_step_sizes"][file.name] = step_size_value
+    else:
+        st.warning("⚠️ Please upload files first to specify individual step sizes.")
 
 
 
@@ -74,8 +119,19 @@ if st.button("📖 click this button to import, read, and process the H5 files. 
     # Actual file processing
     
     # Process data
+    # Prepare step sizes based on mode
+    if st.session_state.get("use_per_file_step_size", False):
+        # Per-file step sizes
+        step_sizes = [st.session_state["file_step_sizes"].get(uploaded_files[i].name, 0.5) for i in range(len(uploaded_files))]
+        st.write(f"📊 Using per-file step sizes: {step_sizes}")
+    else:
+        # Single step size for all files
+        single_step_size = float(st.session_state["step_size"])
+        step_sizes = [single_step_size] * len(uploaded_files)
+        st.write(f"📊 Using step size {single_step_size} cm⁻¹ for all files")
+    
     #Simple Analogy; Hey Python, here's a worker (raw_data) from the FELIX_HDF5_Reader team. I want them to handle the task of processing our data files.
-    raw_data = FELIX_HDF5_Reader(files, directory = file_directory, streamlit_uploaded_files = uploaded_files, step_size=float(st.session_state["step_size"])) # turn into class object
+    raw_data = FELIX_HDF5_Reader(files, directory = file_directory, streamlit_uploaded_files = uploaded_files, step_size=step_sizes) # turn into class object
     current_step += 1
     progress_bar.progress(current_step / total_steps)
 

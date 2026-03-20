@@ -19,7 +19,8 @@ class FELIX_HDF5_Reader:
         Args:
             list_of_files (list): List of HDF5 file objects to process
             streamlit_uploaded_files (list): List of Streamlit UploadedFile objects
-            step_size (float): User-defined step size for rounding wavenumbers
+            step_size (float or list): User-defined step size(s) for rounding wavenumbers.
+                                      Can be a single float (same for all files) or list of floats (per-file)
             directory (str): Base directory for input/output operations. Defaults to current directory.
         
         Attributes:
@@ -69,7 +70,20 @@ class FELIX_HDF5_Reader:
         self.directory_output = self._setup_output_directory(directory)
         
         # Processing parameters
-        self.step_size = step_size  # User defined step size for rounding wavenumbers
+        # Handle both single step size (float) and per-file step sizes (list)
+        if isinstance(step_size, (int, float)):
+            # Single step size - convert to list for all files
+            self.step_sizes = [float(step_size)] * len(list_of_files)
+        elif isinstance(step_size, list):
+            # Per-file step sizes
+            if len(step_size) != len(list_of_files):
+                raise ValueError(f"Number of step sizes ({len(step_size)}) must match number of files ({len(list_of_files)})")
+            self.step_sizes = [float(s) for s in step_size]
+        else:
+            raise TypeError(f"step_size must be float or list, got {type(step_size)}")
+        
+        # For backward compatibility, store first step size as self.step_size
+        self.step_size = self.step_sizes[0] if self.step_sizes else 0.5
         
         # Working variables (used during single file processing)
         self.file = None        # Current file being processed
@@ -167,7 +181,10 @@ class FELIX_HDF5_Reader:
                         # Extract wavenumber from the 'X' dataset
                         # Access path: file['Rawdat'][subgroup_name]["X"][first_element]
                         wavenumber_raw = self.file['Rawdat'][subgroup_name]["X"][:][0]
-                        wavenumber_rounded = (np.round(wavenumber_raw)/self.step_size)*self.step_size
+                        
+                        # Use file-specific step size (stored in self.current_step_size during import_files)
+                        current_step = getattr(self, 'current_step_size', self.step_size)
+                        wavenumber_rounded = (np.round(wavenumber_raw)/current_step)*current_step
                         wavenumber_formatted = float(f"{wavenumber_rounded:.2f}")
 
                         # Store both raw and processed wavenumbers
@@ -219,16 +236,20 @@ class FELIX_HDF5_Reader:
         for i, file in enumerate(self.files):
             # Set current file for processing
             self.file = file
+            # Set current step size for this file
+            self.current_step_size = self.step_sizes[i]
             # Extract data from current file
             wavenumber, signal = self.extract_data()
-            # Store processed data
+            # Store processed data with step size info
             file_data = {
                 'filename': self.streamlit[i].name,
+                'step_size': self.step_sizes[i],  # Store which step size was used
                 'wavenumber_raw': self.wavenumbers_raw.copy(),  # Store raw wavenumbers
                 'wavenumber': wavenumber,
                 'signal': signal
             }
             self.data.append(file_data)
+            print(f"Processed {self.streamlit[i].name} with step size {self.step_sizes[i]} cm⁻¹")
         return self.data
 
 
