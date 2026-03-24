@@ -1,5 +1,6 @@
 from pathlib import Path
 import time
+import re
 
 import h5py
 import streamlit as st
@@ -7,6 +8,36 @@ import configparser
 import os
 
 from packages.FELIX_HDF5_Reader_v2 import *
+
+# Helper function to extract step size from filename
+def extract_step_size_from_filename(filename):
+    """
+    Extract step size from filename pattern like 'step2' or 'step5.5'.
+    
+    Examples:
+        'BRBnz_DisON_FELIX_ArF.008_2200-2070cm-1_step2.h5' -> 2.0
+        'scan_step0.5.h5' -> 0.5
+        'data_step3_run1.h5' -> 3.0
+        'no_step_info.h5' -> None
+    
+    Args:
+        filename (str): The filename to parse
+    
+    Returns:
+        float or None: Extracted step size, or None if not found
+    """
+    # Pattern: 'step' followed by a number (integer or decimal)
+    # Case insensitive match
+    pattern = r'step(\d+\.?\d*)'
+    match = re.search(pattern, filename, re.IGNORECASE)
+    
+    if match:
+        try:
+            step_size = float(match.group(1))
+            return step_size
+        except ValueError:
+            return None
+    return None
 
 # Import variables from defaults.ini
 def load_defaults():
@@ -55,8 +86,16 @@ else:
             st.session_state["file_step_sizes"] = {}
         
         for i, file in enumerate(uploaded_files):
-            # Use previous value if exists, otherwise use default
-            default_value = st.session_state["file_step_sizes"].get(file.name, defaults.get("step_size", 0.5))
+            # Try to auto-detect step size from filename first
+            auto_detected = extract_step_size_from_filename(file.name)
+            
+            # Priority: 1) already set in session state, 2) auto-detected, 3) default
+            if file.name in st.session_state["file_step_sizes"]:
+                default_value = st.session_state["file_step_sizes"][file.name]
+            elif auto_detected is not None:
+                default_value = auto_detected
+            else:
+                default_value = defaults.get("step_size", 0.5)
             
             col1, col2 = st.columns([3, 1])
             with col1:
@@ -123,14 +162,26 @@ if st.button("📖 click this button to import, read, and process the H5 files. 
     if st.session_state.get("use_per_file_step_size", False):
         # Per-file step sizes
         step_sizes = [st.session_state["file_step_sizes"].get(uploaded_files[i].name, 0.5) for i in range(len(uploaded_files))]
-        st.write(f"📊 Using per-file step sizes: {step_sizes}")
     else:
-        # Single step size for all files
-        single_step_size = float(st.session_state["step_size"])
-        step_sizes = [single_step_size] * len(uploaded_files)
-        st.write(f"📊 Using step size {single_step_size} cm⁻¹ for all files")
+        # Single step size mode - but still check for auto-detection from filenames
+        auto_detected_step_sizes = []
+        for i, file in enumerate(uploaded_files):
+            detected = extract_step_size_from_filename(file.name)
+            auto_detected_step_sizes.append(detected)
+        
+        # If all files have auto-detected step sizes, use them
+        if all(s is not None for s in auto_detected_step_sizes):
+            step_sizes = auto_detected_step_sizes
+        # If some but not all have auto-detected, use mixed approach
+        elif any(s is not None for s in auto_detected_step_sizes):
+            single_step_size = float(st.session_state["step_size"])
+            step_sizes = [detected if detected is not None else single_step_size for detected in auto_detected_step_sizes]
+        # If none have auto-detected, use single step size for all
+        else:
+            single_step_size = float(st.session_state["step_size"])
+            step_sizes = [single_step_size] * len(uploaded_files)
     
-    #Simple Analogy; Hey Python, here's a worker (raw_data) from the FELIX_HDF5_Reader team. I want them to handle the task of processing our data files.
+    # Simple Analogy; Hey Python, here's a worker (raw_data) from the FELIX_HDF5_Reader team. I want them to handle the task of processing our data files.
     raw_data = FELIX_HDF5_Reader(files, directory = file_directory, streamlit_uploaded_files = uploaded_files, step_size=step_sizes) # turn into class object
     current_step += 1
     progress_bar.progress(current_step / total_steps)
