@@ -87,23 +87,58 @@ with col1:
     st.session_state["baseline_width"] = float(
         st.text_input("Width of baseline in amu", value=st.session_state.get("baseline_width", defaults.get("baseline_width", None)))
     )
-    baseline_method_options = ["Mean Subtraction","airpls", "airPLS", "ASLS", "Rubberband"]
+    baseline_method_options = ["Mean Subtraction", "iarpls", "aspls", "fabc"]
     st.session_state["baseline_method"] = st.selectbox(
         "Select baseline correction method",
         options=baseline_method_options,
-        index= baseline_method_options.index(st.session_state.get("baseline_method", defaults.get("baseline_method", 0)))   
+        index= baseline_method_options.index(st.session_state.get("baseline_method", defaults.get("baseline_method", 0))) if st.session_state.get("baseline_method") in baseline_method_options else 0,
+        help="**Mean Subtraction**: Simple - subtracts average of baseline region. **iarpls**: Improved arPLS - better for noisy data with close peaks. **aspls**: Adaptive smoothing - handles variable baseline shapes. **fabc**: Fully automatic - no parameter tuning needed."
     )
     # Show additional parameter boxes based on the selected method
-    if st.session_state["baseline_method"].lower() in ["airpls"]:
-         with st.expander("airPLS parameters", expanded=True):
-              st.session_state["airpls_lam"] = st.number_input("Lambda (lam) for airPLS", value=1e6)
-    elif st.session_state["baseline_method"].lower() in ["arpls"]:
-         with st.expander("airPLS parameters", expanded=True):
-              st.session_state["arpls_lam"] = st.number_input("Lambda (lam) for arPLS", value=1e6)
-    elif st.session_state["baseline_method"].upper() == "ASLS":
-         with st.expander("ASLS parameters", expanded=True):
-              st.session_state["asls_lam"] = st.number_input("Lambda for ASLS", value=1e7)
-              st.session_state["asls_p"] = st.number_input("p for ASLS", value=0.02)
+    if st.session_state["baseline_method"].lower() == "iarpls":
+         with st.expander("✨ iarpls parameters", expanded=True):
+              st.info("💡 **iarpls** (Improved arPLS) - Upgraded algorithm that avoids overestimating baseline under small peaks in noisy data. Best for closely-spaced peaks.")
+              st.session_state["iarpls_lam"] = st.number_input(
+                  "Lambda (λ) for iarpls", 
+                  value=1e6,
+                  min_value=1e3,
+                  max_value=1e9,
+                  step=1e5,
+                  format="%.0e",
+                  help="**Smoothness parameter**: For ~60k data points, start with 1e6. Higher (1e7-1e8) = smoother, ignores narrow peaks. Lower (1e5) = more flexible, follows signal closely. If baseline cuts through peaks, INCREASE this."
+              )
+    elif st.session_state["baseline_method"].lower() == "aspls":
+         with st.expander("✨ aspls parameters", expanded=True):
+              st.info("💡 **aspls** (Adaptive Smoothing PLS) - Adapts smoothing based on local signal characteristics. Good for variable baseline shapes.")
+              st.session_state["aspls_lam"] = st.number_input(
+                  "Lambda (λ) for aspls", 
+                  value=1e6,
+                  min_value=1e3,
+                  max_value=1e9,
+                  step=1e5,
+                  format="%.0e",
+                  help="**Smoothness parameter**: Similar to iarpls. Start with 1e6 for your data size. Increase if baseline pulls into peaks."
+              )
+    elif st.session_state["baseline_method"].lower() == "fabc":
+         with st.expander("✨ fabc parameters (mostly automatic)", expanded=True):
+              st.info("💡 **fabc** (Fully Automatic Baseline Correction) - Uses wavelet transform to identify baseline points automatically. Minimal tuning needed!")
+              st.session_state["fabc_lam"] = st.number_input(
+                  "Lambda (λ) for fabc (optional override)", 
+                  value=1e6,
+                  min_value=1e3,
+                  max_value=1e9,
+                  step=1e5,
+                  format="%.0e",
+                  help="**Optional smoothness override**: fabc auto-selects this internally. Only change if automatic results are poor. Default 1e6 is usually fine."
+              )
+              st.session_state["fabc_scale"] = st.number_input(
+                  "Scale parameter for wavelet detection",
+                  value=None,
+                  min_value=1,
+                  max_value=100,
+                  step=1,
+                  help="**Wavelet scale**: Controls peak width detection. Leave as None for automatic. Only adjust if small peaks are missed (decrease) or noise is detected as peaks (increase)."
+              )
 
 with col3:
     st.markdown("#### Plot parameters")
@@ -164,21 +199,22 @@ if st.button("✨ Register parameters and make plot!"):
         data_withoutIR=compiled_data[plot_wavenumber].iloc[:, plot_columnIndex_withoutIR],
         data_withIR=compiled_data[plot_wavenumber].iloc[:, plot_columnIndex_withIR],
         mass_range=x_mass,
-        # method=baseline_method,
-        # airpls_lam=st.session_state.get("airpls_lam", 1e6),
-        # arpls_lam=st.session_state.get("arpls_lam", 1e6),
-        # asls_lam=st.session_state.get("asls_lam", 1e7),
-        # asls_p=st.session_state.get("asls_p", 0.02)
+        method=baseline_method,
+        iarpls_lam=st.session_state.get("iarpls_lam", 1e6),
+        aspls_lam=st.session_state.get("aspls_lam", 1e6),
+        fabc_lam=st.session_state.get("fabc_lam", 1e6),
+        fabc_scale=st.session_state.get("fabc_scale", None)
     )
     
-    # For Mean Subtraction, compute baseline range & mean; for other methods, use full range
+    # For Mean Subtraction, compute baseline range & mean first
     if baseline_method == "Mean Subtraction":
         baseline_range_indices = baseline_correction.baseline_range()
         baseline_correction.baseline_mean()
     else:
+        # For pybaselines methods, baseline range is not used (full range)
         baseline_range_indices = np.arange(len(x_mass))
     
-    # Perform baseline correction
+    # Perform baseline correction (handles all methods internally)
     baseline_corrected_data = baseline_correction.baseline_correction()
 
     # Save variables into session_state for later use
@@ -190,9 +226,10 @@ if st.button("✨ Register parameters and make plot!"):
     tab1, tab2 = st.tabs(["📈 Interactive plot with plotly", "📈 Static plot with matplotlib"])
 
     with tab1:
-        # Create 2-layer Plotly subplot
+        # Create 2-layer Plotly subplot with synchronized axes
         fig = make_subplots(rows=2, cols=1, 
                         shared_xaxes=True,
+                        shared_yaxes=True,  # Synchronize y-axes for same intensity scale
                         vertical_spacing=0.08)
 
         # Top subplot - Raw data traces
@@ -250,33 +287,35 @@ if st.button("✨ Register parameters and make plot!"):
                     line_color="green",
                     row=2)
 
-        # Baseline range (filled area) for top subplot
-        fig.add_trace(go.Scatter(
-            x=[x_mass[baseline_range_indices][0], x_mass[baseline_range_indices][-1], 
-            x_mass[baseline_range_indices][-1], x_mass[baseline_range_indices][0], 
-            x_mass[baseline_range_indices][0]],
-            y=[-0.001, -0.001, baseline_ymax_top, baseline_ymax_top, -0.001],
-            fill="toself",
-            fillcolor='rgba(211,211,211,0.3)',
-            line=dict(color='rgba(211,211,211,0.5)', width=1),
-            name='baseline range',
-            showlegend=True,
-            legendgroup="baseline"
-        ), row=1, col=1)
+        # Baseline range (filled area) - only show for Mean Subtraction
+        if baseline_method == "Mean Subtraction":
+            # Top subplot baseline range
+            fig.add_trace(go.Scatter(
+                x=[x_mass[baseline_range_indices][0], x_mass[baseline_range_indices][-1], 
+                x_mass[baseline_range_indices][-1], x_mass[baseline_range_indices][0], 
+                x_mass[baseline_range_indices][0]],
+                y=[-0.001, -0.001, baseline_ymax_top, baseline_ymax_top, -0.001],
+                fill="toself",
+                fillcolor='rgba(211,211,211,0.3)',
+                line=dict(color='rgba(211,211,211,0.5)', width=1),
+                name='baseline range',
+                showlegend=True,
+                legendgroup="baseline"
+            ), row=1, col=1)
 
-        # Baseline range (filled area) for bottom subplot
-        fig.add_trace(go.Scatter(
-            x=[x_mass[baseline_range_indices][0], x_mass[baseline_range_indices][-1], 
-            x_mass[baseline_range_indices][-1], x_mass[baseline_range_indices][0], 
-            x_mass[baseline_range_indices][0]],
-            y=[-0.001, -0.001, baseline_ymax_bottom, baseline_ymax_bottom, -0.001],
-            fill="toself",
-            fillcolor='rgba(211,211,211,0.3)',
-            line=dict(color='rgba(211,211,211,0.5)', width=1),
-            name='baseline range',
-            showlegend=False,  # Don't show duplicate legend
-            legendgroup="baseline"
-        ), row=2, col=1)
+            # Bottom subplot baseline range
+            fig.add_trace(go.Scatter(
+                x=[x_mass[baseline_range_indices][0], x_mass[baseline_range_indices][-1], 
+                x_mass[baseline_range_indices][-1], x_mass[baseline_range_indices][0], 
+                x_mass[baseline_range_indices][0]],
+                y=[-0.001, -0.001, baseline_ymax_bottom, baseline_ymax_bottom, -0.001],
+                fill="toself",
+                fillcolor='rgba(211,211,211,0.3)',
+                line=dict(color='rgba(211,211,211,0.5)', width=1),
+                name='baseline range',
+                showlegend=False,  # Don't show duplicate legend
+                legendgroup="baseline"
+            ), row=2, col=1)
 
         # Horizontal lines at y=0 for both subplots
         fig.add_hline(y=0, 
@@ -330,9 +369,17 @@ if st.button("✨ Register parameters and make plot!"):
             mirror=False
         )
 
-        # Set y-axis ranges for each subplot
-        fig.update_yaxes(range=[-0.001, baseline_ymax_top], row=1, col=1)
-        fig.update_yaxes(range=[-0.001, baseline_ymax_bottom], row=2, col=1)
+        # Set synchronized y-axis range for both subplots
+        # Use the maximum of both to ensure both plots fit
+        max_ymax = max(baseline_ymax_top, baseline_ymax_bottom)
+        fig.update_yaxes(range=[-0.001, max_ymax], row=1, col=1)
+        fig.update_yaxes(range=[-0.001, max_ymax], row=2, col=1)
+        
+        # Enable synchronized zooming and panning
+        fig.update_xaxes(matches='x', row=1, col=1)
+        fig.update_xaxes(matches='x', row=2, col=1)
+        fig.update_yaxes(matches='y', row=1, col=1)
+        fig.update_yaxes(matches='y', row=2, col=1)
 
         # Add x-axis title only to bottom subplot
         fig.update_xaxes(title_text="Mass (amu)", row=2, col=1)

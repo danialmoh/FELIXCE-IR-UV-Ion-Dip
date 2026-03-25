@@ -71,6 +71,13 @@ plot_wavenumber = st.session_state.get("plot_wavenumber", None)
 
 if st.button("**:blue[#1]** ✨ Perform baseline correction - full range"):
     baseline_method = st.session_state.get("baseline_method", "Mean Subtraction")
+    
+    # Get baseline method parameters from session_state
+    iarpls_lam = st.session_state.get("iarpls_lam", 1e6)
+    aspls_lam = st.session_state.get("aspls_lam", 1e6)
+    fabc_lam = st.session_state.get("fabc_lam", 1e6)
+    fabc_scale = st.session_state.get("fabc_scale", None)
+    
     compilation_baseline_corrected_data = {}
     
     for wavenumber in unique_wavenumbers:
@@ -94,30 +101,32 @@ if st.button("**:blue[#1]** ✨ Perform baseline correction - full range"):
             mean_value_withIR = np.mean(sum_withIR[baseline_range_indices])
             corrected_without = sum_withoutIR - mean_value_withoutIR
             corrected_with = sum_withIR - mean_value_withIR
-        elif baseline_method.lower() in ["airpls", "arpls"]:
+        elif baseline_method.lower() == "iarpls":
             from pybaselines import Baseline
             baseline_fitter = Baseline(x_data=x_mass)
-            # Removed 'itermax' argument here
-            baseline_without, _ = baseline_fitter.arpls(sum_withoutIR, lam=100)
-            baseline_with, _ = baseline_fitter.arpls(sum_withIR, lam=100)
+            # Use UI parameter from session_state
+            baseline_without, _ = baseline_fitter.iarpls(sum_withoutIR, lam=iarpls_lam)
+            baseline_with, _ = baseline_fitter.iarpls(sum_withIR, lam=iarpls_lam)
             corrected_without = sum_withoutIR - baseline_without
             corrected_with = sum_withIR - baseline_with
-        elif baseline_method.upper() == "ASLS":
+        elif baseline_method.lower() == "aspls":
             from pybaselines import Baseline
             baseline_fitter = Baseline(x_data=x_mass)
-            baseline_without, _ = baseline_fitter.asls(sum_withoutIR, lam=1e7, p=0.02)
-            baseline_with, _ = baseline_fitter.asls(sum_withIR, lam=1e7, p=0.02)
+            # Use UI parameter from session_state
+            baseline_without, _ = baseline_fitter.aspls(sum_withoutIR, lam=aspls_lam)
+            baseline_with, _ = baseline_fitter.aspls(sum_withIR, lam=aspls_lam)
             corrected_without = sum_withoutIR - baseline_without
             corrected_with = sum_withIR - baseline_with
-        elif baseline_method.upper() == "RUBBERBAND":
+        elif baseline_method.lower() == "fabc":
             from pybaselines import Baseline
             baseline_fitter = Baseline(x_data=x_mass)
-            baseline_without, _ = baseline_fitter.rubberband(sum_withoutIR)
-            baseline_with, _ = baseline_fitter.rubberband(sum_withIR)
+            # Use UI parameters from session_state
+            baseline_without, _ = baseline_fitter.fabc(sum_withoutIR, lam=fabc_lam, scale=fabc_scale)
+            baseline_with, _ = baseline_fitter.fabc(sum_withIR, lam=fabc_lam, scale=fabc_scale)
             corrected_without = sum_withoutIR - baseline_without
             corrected_with = sum_withIR - baseline_with
         else:
-            raise ValueError("Unsupported baseline method")
+            raise ValueError(f"Unsupported baseline method: {baseline_method}. Supported: Mean Subtraction, iarpls, aspls, fabc")
         
         new_table = pd.DataFrame({
             "sum_" + str(wavenumber) + "_withoutIR": sum_withoutIR,

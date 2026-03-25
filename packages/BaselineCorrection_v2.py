@@ -82,7 +82,7 @@ def mass_range(n_element1, n_element2, n_element3, element1, element2, element3,
 
 class baseline:
 
-    def __init__(self, baseline_reference = None, interval = None, wavenumber = None, column_withoutIR = None, column_withIR = None, data_withoutIR = None, data_withIR = None, mass_range = None):
+    def __init__(self, baseline_reference = None, interval = None, wavenumber = None, column_withoutIR = None, column_withIR = None, data_withoutIR = None, data_withIR = None, mass_range = None, method = "Mean Subtraction", iarpls_lam = 1e6, aspls_lam = 1e6, fabc_lam = 1e6, fabc_scale = None):
         """
         Initialize baseline correction class for mass spectrometry data analysis.
         
@@ -134,6 +134,7 @@ class baseline:
         # Baseline parameters
         self.baseline_reference = baseline_reference
         self.interval = interval  # Define mass range based on the interval
+        self.method = method  # Baseline correction method
         
         # Data identifiers
         self.wavenumber = wavenumber
@@ -148,6 +149,14 @@ class baseline:
         self.baseline_range_indices = 0
         self.mean_value_withoutIR = 0
         self.mean_value_withIR = 0
+        self.baseline_withoutIR = None  # For pybaselines methods
+        self.baseline_withIR = None  # For pybaselines methods
+        
+        # pybaselines parameters
+        self.iarpls_lam = iarpls_lam
+        self.aspls_lam = aspls_lam
+        self.fabc_lam = fabc_lam
+        self.fabc_scale = fabc_scale
         
         # Data storage
         self.baseline_corrected = {}
@@ -224,12 +233,11 @@ class baseline:
         """
         Perform baseline correction on mass spectrometry signal data.
         
-        This method subtracts the calculated baseline mean values from the original
-        signal data to normalize and correct for baseline drift or offset in both
-        IR conditions (withoutIR and withIR).
-        
-        The correction is performed as:
-        - corrected_signal = original_signal - baseline_mean
+        This method supports multiple baseline correction methods:
+        - Mean Subtraction: subtracts mean baseline value
+        - airPLS/arPLS: Adaptive Iteratively Reweighted Penalized Least Squares
+        - ASLS: Asymmetric Least Squares Smoothing
+        - Rubberband: Convex hull baseline
         
         Returns:
             pd.DataFrame: DataFrame containing baseline-corrected signals with columns:
@@ -240,24 +248,48 @@ class baseline:
             self.baseline_corrected (pd.DataFrame): Stored baseline-corrected data
         
         Note:
-            - Requires self.mean_value_withoutIR and self.mean_value_withIR to be calculated first
-            (call baseline_mean() before this method)
-            - Uses self.data_withoutIR and self.data_withIR as input signal data
-            - Column names are dynamically generated using self.column_withoutIR and self.column_withIR
-            - The corrected data is ready for further analysis or plotting
+            - For Mean Subtraction: requires baseline_mean() to be called first
+            - For pybaselines methods: requires self.mass_range to be set
         """
         
-        # Initialize variables
-        signal_withoutIR = {}
-        signal_withIR = {}
-        baseline_corrected_signal_withoutIR = {}
-        baseline_corrected_signal_withIR = {}
-
         signal_withoutIR = self.data_withoutIR
         signal_withIR = self.data_withIR
 
-        baseline_corrected_signal_withoutIR = signal_withoutIR - self.mean_value_withoutIR
-        baseline_corrected_signal_withIR = signal_withIR - self.mean_value_withIR
+        if self.method == "Mean Subtraction":
+            # Use mean baseline subtraction
+            baseline_corrected_signal_withoutIR = signal_withoutIR - self.mean_value_withoutIR
+            baseline_corrected_signal_withIR = signal_withIR - self.mean_value_withIR
+        
+        elif self.method.lower() == "iarpls":
+            # Use pybaselines iarpls method (improved arpls)
+            from pybaselines import Baseline
+            baseline_fitter = Baseline(x_data=self.mass_range)
+            self.baseline_withoutIR, _ = baseline_fitter.iarpls(signal_withoutIR, lam=self.iarpls_lam)
+            self.baseline_withIR, _ = baseline_fitter.iarpls(signal_withIR, lam=self.iarpls_lam)
+            baseline_corrected_signal_withoutIR = signal_withoutIR - self.baseline_withoutIR
+            baseline_corrected_signal_withIR = signal_withIR - self.baseline_withIR
+        
+        elif self.method.lower() == "aspls":
+            # Use pybaselines aspls method (adaptive smoothing)
+            from pybaselines import Baseline
+            baseline_fitter = Baseline(x_data=self.mass_range)
+            self.baseline_withoutIR, _ = baseline_fitter.aspls(signal_withoutIR, lam=self.aspls_lam)
+            self.baseline_withIR, _ = baseline_fitter.aspls(signal_withIR, lam=self.aspls_lam)
+            baseline_corrected_signal_withoutIR = signal_withoutIR - self.baseline_withoutIR
+            baseline_corrected_signal_withIR = signal_withIR - self.baseline_withIR
+        
+        elif self.method.lower() == "fabc":
+            # Use pybaselines fabc method (fully automatic)
+            from pybaselines import Baseline
+            baseline_fitter = Baseline(x_data=self.mass_range)
+            # fabc can take lam as override, scale for wavelet detection
+            self.baseline_withoutIR, _ = baseline_fitter.fabc(signal_withoutIR, lam=self.fabc_lam, scale=self.fabc_scale)
+            self.baseline_withIR, _ = baseline_fitter.fabc(signal_withIR, lam=self.fabc_lam, scale=self.fabc_scale)
+            baseline_corrected_signal_withoutIR = signal_withoutIR - self.baseline_withoutIR
+            baseline_corrected_signal_withIR = signal_withIR - self.baseline_withIR
+        
+        else:
+            raise ValueError(f"Unsupported baseline method: {self.method}. Supported: Mean Subtraction, iarpls, aspls, fabc")
 
         self.baseline_corrected = pd.DataFrame({
             "baseline_corrected_"+self.column_withoutIR: baseline_corrected_signal_withoutIR,
