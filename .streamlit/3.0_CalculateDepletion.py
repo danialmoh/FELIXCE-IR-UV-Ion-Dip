@@ -1059,6 +1059,11 @@ with col2:
                 "Save outputs to output directory",
                 value=st.session_state.get("save_output", True),
             )
+            st.session_state["show_gaps_in_plots"] = st.toggle(
+                "Show gaps where data is missing",
+                value=st.session_state.get("show_gaps_in_plots", False),
+                help="When enabled, missing wavenumbers will show as gaps in plots instead of connecting lines"
+            )
 
         with col_plot:
             st.session_state["plot_columnIndex_withoutIR"] = int(
@@ -1450,6 +1455,33 @@ if run_button:
         fullrange_depletion_data = fullrange_depletion_spectra_multi_peak.make_IR_yield_spectra()
         orig_fullrange_data = fullrange_depletion_data.copy()
     
+    # Insert NaN rows for missing wavenumbers to create gaps in plots (if option enabled)
+    if st.session_state.get("show_gaps_in_plots", False) and len(fullrange_depletion_data) > 0:
+        wn_min = fullrange_depletion_data.iloc[:, 0].min()
+        wn_max = fullrange_depletion_data.iloc[:, 0].max()
+        # Determine step size from existing data
+        wn_diffs = np.diff(sorted(fullrange_depletion_data.iloc[:, 0].unique()))
+        if len(wn_diffs) > 0:
+            typical_step = np.median(wn_diffs)
+            # Create complete wavenumber range
+            expected_wavenumbers = np.arange(wn_min, wn_max + typical_step, typical_step)
+            # Find missing wavenumbers
+            existing_wavenumbers = set(fullrange_depletion_data.iloc[:, 0].values)
+            missing_wavenumbers = [wn for wn in expected_wavenumbers if wn not in existing_wavenumbers]
+            
+            # Add NaN rows for missing wavenumbers
+            if len(missing_wavenumbers) > 0:
+                nan_rows = pd.DataFrame({
+                    fullrange_depletion_data.columns[0]: missing_wavenumbers,
+                    fullrange_depletion_data.columns[1]: [np.nan] * len(missing_wavenumbers),
+                    fullrange_depletion_data.columns[2]: [np.nan] * len(missing_wavenumbers),
+                    fullrange_depletion_data.columns[3]: [np.nan] * len(missing_wavenumbers),
+                    fullrange_depletion_data.columns[4]: [np.nan] * len(missing_wavenumbers)
+                })
+                fullrange_depletion_data = pd.concat([fullrange_depletion_data, nan_rows], ignore_index=True)
+                fullrange_depletion_data = fullrange_depletion_data.sort_values(by=fullrange_depletion_data.columns[0]).reset_index(drop=True)
+                orig_fullrange_data = fullrange_depletion_data.copy()
+    
     list_mass_isotope = fullrange_depletion_spectra_multi_peak.isotope_mass_peaks
     list_scanwidth_isotope = fullrange_depletion_spectra_multi_peak.isotope_scanwidths
     st.session_state.fullrange_depletion_data = fullrange_depletion_data
@@ -1784,7 +1816,8 @@ if run_button:
             x=x_data_dep,
             y=data[:, 3],
             name=fullrange_depletion_data.columns[3],
-            line=dict(color="#1f77b4")
+            line=dict(color="#1f77b4"),
+            connectgaps=not st.session_state.get("show_gaps_in_plots", False)
         ))
         zero_line_depletion = 1
         fig_dep.add_trace(go.Scatter(
@@ -1874,7 +1907,8 @@ if run_button:
             x=x_data_ln,
             y=data[:, 4],
             name=fullrange_depletion_data.columns[4],
-            line=dict(color="#1f77b4")
+            line=dict(color="#1f77b4"),
+            connectgaps=not st.session_state.get("show_gaps_in_plots", False)
         ))
         zero_line_ln = 0
         fig_ln.add_trace(go.Scatter(
@@ -2027,14 +2061,16 @@ if run_button:
             y=fullrange_depletion_data.iloc[:, 1],
             mode='lines',
             name="Without IR",
-            line=dict(color="black")
+            line=dict(color="black"),
+            connectgaps=not st.session_state.get("show_gaps_in_plots", False)
         ))
         fig.add_trace(go.Scatter(
             x=fullrange_depletion_data.iloc[:, 0],
             y=fullrange_depletion_data.iloc[:, 2],
             mode='lines',
             name="With IR",
-            line=dict(color="red")
+            line=dict(color="red"),
+            connectgaps=not st.session_state.get("show_gaps_in_plots", False)
         ))
         fig.update_layout(
             xaxis_title="Wavenumber (cm⁻¹)",

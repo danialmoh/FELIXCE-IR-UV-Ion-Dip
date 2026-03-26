@@ -6,6 +6,10 @@ import h5py
 import streamlit as st
 import configparser
 import os
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+from scipy.interpolate import interp1d
 
 from packages.FELIX_HDF5_Reader_v2 import *
 
@@ -115,6 +119,200 @@ else:
     else:
         st.warning("⚠️ Please upload files first to specify individual step sizes.")
 
+# ==================== WAVELENGTH CALIBRATION SECTION ====================
+st.markdown("### Wavelength Calibration Configuration")
+st.info("📏 Apply wavelength calibration to correct scanned wavenumbers before grouping data. Different experiments may require different calibrations.")
+
+# ==================== CREATE CALIBRATION TABLE ====================
+with st.expander("🛠️ Create Calibration Table (Optional)", expanded=False):
+    st.markdown("**Create a calibration table if you don't have one yet**")
+    
+    # Initialize default calibration table if not exists
+    if "calibration_table_creator" not in st.session_state:
+        st.session_state["calibration_table_creator"] = pd.DataFrame({
+            "Scanned_cm-1": [1400.0, 1450.0, 1500.0],
+            "Real_cm-1": [1398.5, 1448.2, 1497.8]
+        })
+    
+    st.markdown("**Edit Calibration Points** (click buttons below to preview or download):")
+    edited_cal_table = st.data_editor(
+        st.session_state["calibration_table_creator"],
+        num_rows="dynamic",
+        use_container_width=True,
+        key="calibration_creator_editor",
+        disabled=False
+    )
+    
+    # Action buttons
+    cal_col1, cal_col2 = st.columns(2)
+    
+    with cal_col1:
+        if st.button("📊 Preview Calibration Curve", use_container_width=True, key="preview_cal_import"):
+            st.session_state["calibration_table_creator"] = edited_cal_table
+            try:
+                scanned = edited_cal_table["Scanned_cm-1"].values
+                real = edited_cal_table["Real_cm-1"].values
+                
+                if len(scanned) < 2:
+                    st.error("Need at least 2 calibration points")
+                else:
+                    # Create preview plot
+                    fig_cal = go.Figure()
+                    
+                    # Calibration points
+                    fig_cal.add_trace(go.Scatter(
+                        x=scanned, 
+                        y=real,
+                        mode='markers',
+                        name='Calibration Points',
+                        marker=dict(size=10, color='red', symbol='circle')
+                    ))
+                    
+                    # Fitted curve - select interpolation method based on number of points
+                    if len(scanned) >= 4:
+                        # Cubic interpolation requires at least 4 points
+                        cal_func = interp1d(scanned, real, kind='cubic', fill_value='extrapolate', bounds_error=False)
+                        interp_type = 'Cubic spline'
+                    elif len(scanned) == 3:
+                        # Quadratic for 3 points
+                        cal_func = interp1d(scanned, real, kind='quadratic', fill_value='extrapolate', bounds_error=False)
+                        interp_type = 'Quadratic'
+                    else:
+                        # Linear for 2 points
+                        cal_func = interp1d(scanned, real, kind='linear', fill_value='extrapolate', bounds_error=False)
+                        interp_type = 'Linear'
+                    
+                    x_fit = np.linspace(scanned.min(), scanned.max(), 200)
+                    y_fit = cal_func(x_fit)
+                    
+                    fig_cal.add_trace(go.Scatter(
+                        x=x_fit, 
+                        y=y_fit,
+                        mode='lines',
+                        name='Interpolation Curve',
+                        line=dict(color='blue', width=2)
+                    ))
+                    
+                    # 1:1 reference line
+                    ref_min = min(scanned.min(), real.min())
+                    ref_max = max(scanned.max(), real.max())
+                    fig_cal.add_trace(go.Scatter(
+                        x=[ref_min, ref_max],
+                        y=[ref_min, ref_max],
+                        mode='lines',
+                        name='1:1 Reference',
+                        line=dict(dash='dash', color='gray', width=1)
+                    ))
+                    
+                    fig_cal.update_layout(
+                        xaxis_title="Scanned Wavenumber (cm⁻¹)",
+                        yaxis_title="Real Wavenumber (cm⁻¹)",
+                        title="Wavenumber Calibration Curve",
+                        height=400,
+                        showlegend=True
+                    )
+                    
+                    st.plotly_chart(fig_cal, use_container_width=True)
+                    
+                    # Show offset statistics
+                    offset = real - scanned
+                    st.markdown(f"""
+                    **Calibration Statistics:**
+                    - Points: {len(scanned)}
+                    - Offset range: {offset.min():.2f} to {offset.max():.2f} cm⁻¹
+                    - Mean offset: {offset.mean():.2f} cm⁻¹
+                    - Interpolation: {interp_type}
+                    """)
+                    
+            except Exception as e:
+                st.error(f"Error creating preview: {e}")
+    
+    with cal_col2:
+        if st.button("💾 Download Calibration CSV", use_container_width=True, key="download_cal_import"):
+            st.session_state["calibration_table_creator"] = edited_cal_table
+            csv_data = edited_cal_table.to_csv(index=False)
+            st.download_button(
+                label="📥 Download",
+                data=csv_data,
+                file_name="wavenumber_calibration.csv",
+                mime="text/csv",
+                use_container_width=True,
+                key="download_cal_csv_button"
+            )
+    
+    st.info("💡 **Tip**: After downloading, upload the CSV file below and assign it to your data files.")
+
+st.divider()
+
+# Upload calibration CSV files
+calibration_files = st.file_uploader(
+    "Upload Calibration CSV Files (columns: Scanned_cm-1, Real_cm-1)",
+    accept_multiple_files=True,
+    type=['csv'],
+    help="Upload one or more calibration CSV files. Each file should have 'Scanned_cm-1' and 'Real_cm-1' columns.",
+    key="calibration_uploader"
+)
+
+# Parse and store calibration tables
+if "calibration_tables" not in st.session_state:
+    st.session_state["calibration_tables"] = {}
+
+if calibration_files:
+    for cal_file in calibration_files:
+        try:
+            cal_df = pd.read_csv(cal_file)
+            if "Scanned_cm-1" in cal_df.columns and "Real_cm-1" in cal_df.columns:
+                # Store calibration table with filename as key
+                st.session_state["calibration_tables"][cal_file.name] = cal_df
+            else:
+                st.error(f"❌ {cal_file.name}: CSV must have columns 'Scanned_cm-1' and 'Real_cm-1'")
+        except Exception as e:
+            st.error(f"❌ Error reading {cal_file.name}: {e}")
+
+# Show loaded calibration tables
+if st.session_state["calibration_tables"]:
+    st.success(f"✅ Loaded {len(st.session_state['calibration_tables'])} calibration table(s): {', '.join(st.session_state['calibration_tables'].keys())}")
+    
+    # Option to preview calibration tables
+    with st.expander("📊 Preview Calibration Tables", expanded=False):
+        for cal_name, cal_df in st.session_state["calibration_tables"].items():
+            st.markdown(f"**{cal_name}**")
+            st.dataframe(cal_df, use_container_width=True)
+
+# Per-file calibration assignment
+if uploaded_files:
+    st.markdown("#### Assign Calibration to Each File")
+    
+    # Initialize file calibration assignments if not exists
+    if "file_calibrations" not in st.session_state:
+        st.session_state["file_calibrations"] = {}
+    
+    # Create list of calibration options
+    cal_options = ["None (no calibration)"] + list(st.session_state["calibration_tables"].keys())
+    
+    for i, file in enumerate(uploaded_files):
+        col1, col2 = st.columns([3, 2])
+        with col1:
+            st.text(f"📁 {file.name}")
+        with col2:
+            # Get current selection or default to None
+            current_cal = st.session_state["file_calibrations"].get(file.name, "None (no calibration)")
+            if current_cal not in cal_options:
+                current_cal = "None (no calibration)"
+            
+            default_idx = cal_options.index(current_cal)
+            
+            selected_cal = st.selectbox(
+                "Calibration",
+                options=cal_options,
+                index=default_idx,
+                key=f"cal_select_{i}_{file.name}",
+                label_visibility="collapsed"
+            )
+            st.session_state["file_calibrations"][file.name] = selected_cal
+else:
+    st.warning("⚠️ Upload files first to assign calibrations.")
+
 
 
 # Initialize variables
@@ -181,8 +379,26 @@ if st.button("📖 click this button to import, read, and process the H5 files. 
             single_step_size = float(st.session_state["step_size"])
             step_sizes = [single_step_size] * len(uploaded_files)
     
+    # Prepare calibration functions for each file
+    calibration_functions = []
+    for file in uploaded_files:
+        cal_name = st.session_state.get("file_calibrations", {}).get(file.name, "None (no calibration)")
+        
+        if cal_name != "None (no calibration)" and cal_name in st.session_state.get("calibration_tables", {}):
+            # Create interpolation function for this file
+            cal_table = st.session_state["calibration_tables"][cal_name]
+            scanned = cal_table["Scanned_cm-1"].values
+            real = cal_table["Real_cm-1"].values
+            
+            # Create interpolation function with extrapolation
+            cal_func = interp1d(scanned, real, kind='linear', fill_value='extrapolate', bounds_error=False)
+            calibration_functions.append(cal_func)
+        else:
+            # No calibration for this file
+            calibration_functions.append(None)
+    
     # Simple Analogy; Hey Python, here's a worker (raw_data) from the FELIX_HDF5_Reader team. I want them to handle the task of processing our data files.
-    raw_data = FELIX_HDF5_Reader(files, directory = file_directory, streamlit_uploaded_files = uploaded_files, step_size=step_sizes) # turn into class object
+    raw_data = FELIX_HDF5_Reader(files, directory = file_directory, streamlit_uploaded_files = uploaded_files, step_size=step_sizes, calibration_functions=calibration_functions) # turn into class object
     current_step += 1
     progress_bar.progress(current_step / total_steps)
 

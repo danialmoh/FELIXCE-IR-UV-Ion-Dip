@@ -8,7 +8,7 @@ __all__ = ['FELIX_HDF5_Reader']
 
 class FELIX_HDF5_Reader:
 
-    def __init__(self, list_of_files, streamlit_uploaded_files, step_size, directory=r'.' ):
+    def __init__(self, list_of_files, streamlit_uploaded_files, step_size, calibration_functions=None, directory=r'.' ):
         """
         Initialize FELIX HDF5 data reader for mass spectrometry data analysis.
         
@@ -85,10 +85,25 @@ class FELIX_HDF5_Reader:
         # For backward compatibility, store first step size as self.step_size
         self.step_size = self.step_sizes[0] if self.step_sizes else 0.5
         
+        # Calibration functions (per-file)
+        if calibration_functions is None:
+            # No calibration - create list of None
+            self.calibration_functions = [None] * len(list_of_files)
+        elif isinstance(calibration_functions, list):
+            if len(calibration_functions) != len(list_of_files):
+                raise ValueError(f"Number of calibration functions ({len(calibration_functions)}) must match number of files ({len(list_of_files)})")
+            self.calibration_functions = calibration_functions
+        else:
+            raise TypeError(f"calibration_functions must be list or None, got {type(calibration_functions)}")
+        
+        # Current file's calibration function (set during import_files)
+        self.current_calibration = None
+        
         # Working variables (used during single file processing)
         self.file = None        # Current file being processed
-        self.wavenumbers_raw = [] # Temporary raw wavenumber storage (before step-size rounding)
-        self.wavenumbers = []   # Temporary wavenumber storage
+        self.current_step_size = None  # Current file's step size
+        self.wavenumbers_raw = [] # Temporary raw wavenumber storage (before calibration and rounding)
+        self.wavenumbers = []   # Temporary wavenumber storage (after calibration and rounding)
         self.signal = []        # Temporary signal storage
 
 
@@ -182,9 +197,15 @@ class FELIX_HDF5_Reader:
                         # Access path: file['Rawdat'][subgroup_name]["X"][first_element]
                         wavenumber_raw = self.file['Rawdat'][subgroup_name]["X"][:][0]
                         
+                        # Apply wavelength calibration if available for this file
+                        if self.current_calibration is not None:
+                            wavenumber_calibrated = float(self.current_calibration(wavenumber_raw))
+                        else:
+                            wavenumber_calibrated = wavenumber_raw
+                        
                         # Use file-specific step size (stored in self.current_step_size during import_files)
                         current_step = getattr(self, 'current_step_size', self.step_size)
-                        wavenumber_rounded = (np.round(wavenumber_raw)/current_step)*current_step
+                        wavenumber_rounded = (np.round(wavenumber_calibrated)/current_step)*current_step
                         wavenumber_formatted = float(f"{wavenumber_rounded:.2f}")
 
                         # Store both raw and processed wavenumbers
@@ -238,18 +259,23 @@ class FELIX_HDF5_Reader:
             self.file = file
             # Set current step size for this file
             self.current_step_size = self.step_sizes[i]
+            # Set current calibration function for this file
+            self.current_calibration = self.calibration_functions[i]
             # Extract data from current file
             wavenumber, signal = self.extract_data()
-            # Store processed data with step size info
+            # Store processed data with step size and calibration info
             file_data = {
                 'filename': self.streamlit[i].name,
                 'step_size': self.step_sizes[i],  # Store which step size was used
+                'has_calibration': self.calibration_functions[i] is not None,  # Track if calibration was applied
                 'wavenumber_raw': self.wavenumbers_raw.copy(),  # Store raw wavenumbers
                 'wavenumber': wavenumber,
                 'signal': signal
             }
             self.data.append(file_data)
-            print(f"Processed {self.streamlit[i].name} with step size {self.step_sizes[i]} cm⁻¹")
+            # Print processing confirmation with calibration status
+            cal_status = "✓ Calibrated" if self.calibration_functions[i] is not None else "No calibration"
+            print(f"Processed {self.streamlit[i].name} | Step size: {self.step_sizes[i]} cm⁻¹ | {cal_status}")
         return self.data
 
 

@@ -57,6 +57,10 @@ with st.sidebar:
     # Workflow sections with custom styling
     st.markdown("### 📋 Workflow Modules")
     
+    # Home button
+    if st.button("🏠 Home", use_container_width=True, key="btn_home", type="primary"):
+        st.switch_page(".streamlit/0.0_Home.py")
+    
     # Section 1: Data Import
     with st.container(border=True):
         st.markdown("#### 📥 Data Import")

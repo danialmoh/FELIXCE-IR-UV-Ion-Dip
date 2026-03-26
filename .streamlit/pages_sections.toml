@@ -1,4 +1,9 @@
 [[pages]]
+path = ".streamlit/0.0_Home.py"
+name = "0. Home"
+icon = "🏠"
+
+[[pages]]
 path = ".streamlit/1.0_ImportData.py"
 name = "1. Import data"
 icon = "📥"

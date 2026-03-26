@@ -6,6 +6,7 @@ import configparser
 import os
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from scipy.interpolate import interp1d
 from packages.BaselineCorrection_v2 import *
 # from packages.BaselineCorrection import mass_range, baseline_new
 
