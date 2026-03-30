@@ -119,18 +119,34 @@ def compute_pcc(exp_x, exp_y, theory_x, theory_y, region=None):
     r, p = pearsonr(exp_norm, theory_norm)
     return r, p, grid, exp_norm, theory_norm
 
+# Default PCC thresholds (adjusted for IR-UV action spectra)
+DEFAULT_PCC_THRESHOLDS = {
+    "excellent": 0.60,
+    "good": 0.40,
+    "weak": 0.20,
+}
+
+def get_pcc_thresholds():
+    """Get PCC thresholds from session state or use defaults"""
+    return {
+        "excellent": st.session_state.get("pcc_threshold_excellent", DEFAULT_PCC_THRESHOLDS["excellent"]),
+        "good": st.session_state.get("pcc_threshold_good", DEFAULT_PCC_THRESHOLDS["good"]),
+        "weak": st.session_state.get("pcc_threshold_weak", DEFAULT_PCC_THRESHOLDS["weak"]),
+    }
+
 def score_label(r):
     """
-    Human-readable label based on adjusted thresholds for IR-UV action spectra.
-    Note: Thresholds lower than Von der Esch et al. due to action vs absorption differences.
+    Human-readable label based on adjustable thresholds for IR-UV action spectra.
+    Reads thresholds from session state so users can customize them.
     """
     if r is None:
         return "N/A", "gray"
-    elif r >= 0.60:  # Adjusted from 0.75
+    thresholds = get_pcc_thresholds()
+    if r >= thresholds["excellent"]:
         return "Excellent ✅", "green"
-    elif r >= 0.40:  # Adjusted from 0.50
+    elif r >= thresholds["good"]:
         return "Good 🟡", "orange"
-    elif r >= 0.20:  # Adjusted from 0.30
+    elif r >= thresholds["weak"]:
         return "Weak ⚠️", "orange"
     else:
         return "Poor / Rule Out ❌", "red"
@@ -838,6 +854,27 @@ if fullrange_depletion_data is not None and 'dft_x_broad' in st.session_state:
         ⚠️ Note: Thresholds adjusted for IR-UV spectra (lower than absorption IR literature values).
         """)
         
+        # Customizable PCC thresholds
+        with st.expander("⚙️ Customize PCC Thresholds", expanded=False):
+            st.caption("Set the PCC score boundaries for each verdict category. Values are Pearson r (-1 to 1).")
+            thr_col1, thr_col2, thr_col3 = st.columns(3)
+            with thr_col1:
+                st.session_state["pcc_threshold_excellent"] = st.number_input(
+                    "Excellent ✅ (r ≥)", value=st.session_state.get("pcc_threshold_excellent", DEFAULT_PCC_THRESHOLDS["excellent"]),
+                    min_value=0.0, max_value=1.0, step=0.05, format="%.2f", key="_pcc_thr_exc"
+                )
+            with thr_col2:
+                st.session_state["pcc_threshold_good"] = st.number_input(
+                    "Good 🟡 (r ≥)", value=st.session_state.get("pcc_threshold_good", DEFAULT_PCC_THRESHOLDS["good"]),
+                    min_value=0.0, max_value=1.0, step=0.05, format="%.2f", key="_pcc_thr_good"
+                )
+            with thr_col3:
+                st.session_state["pcc_threshold_weak"] = st.number_input(
+                    "Weak ⚠️ (r ≥)", value=st.session_state.get("pcc_threshold_weak", DEFAULT_PCC_THRESHOLDS["weak"]),
+                    min_value=0.0, max_value=1.0, step=0.05, format="%.2f", key="_pcc_thr_weak"
+                )
+            st.caption("Below the **Weak** threshold → **Poor / Rule Out ❌**")
+        
         # Compute PCC for all diagnostic regions
         DIAGNOSTIC_REGIONS = get_diagnostic_regions()
         pcc_results = []
@@ -879,16 +916,17 @@ if fullrange_depletion_data is not None and 'dft_x_broad' in st.session_state:
         )
         
         # Bar chart of PCC scores per region
-        st.markdown("#### � Regional PCC Scores")
+        st.markdown("#### 📊 Regional PCC Scores")
         fig_pcc, ax_pcc = plt.subplots(figsize=(10, 4))
         valid = df_pcc.dropna(subset=["PCC (r)"])
+        thresholds = get_pcc_thresholds()
         colors_bar = [
-            "#28a745" if r >= 0.60 else "#ffc107" if r >= 0.40 else "#dc3545"
+            "#28a745" if r >= thresholds["excellent"] else "#ffc107" if r >= thresholds["good"] else "#dc3545"
             for r in valid["PCC (r)"]
         ]
         bars = ax_pcc.barh(valid["Region"], valid["PCC (r)"], color=colors_bar, alpha=0.8)
-        ax_pcc.axvline(0.40, color='orange', linestyle='--', linewidth=1.2, label='Good threshold (0.40)', alpha=0.7)
-        ax_pcc.axvline(0.60, color='green', linestyle='--', linewidth=1.2, label='Excellent threshold (0.60)', alpha=0.7)
+        ax_pcc.axvline(thresholds["good"], color='orange', linestyle='--', linewidth=1.2, label=f'Good threshold ({thresholds["good"]:.2f})', alpha=0.7)
+        ax_pcc.axvline(thresholds["excellent"], color='green', linestyle='--', linewidth=1.2, label=f'Excellent threshold ({thresholds["excellent"]:.2f})', alpha=0.7)
         ax_pcc.axvline(0.0, color='black', linestyle='-', linewidth=0.8)
         ax_pcc.set_xlabel("Pearson r", fontsize=11)
         ax_pcc.set_title("Region-wise PCC Scores (Adjusted for IR-UV Spectra)", fontsize=13, fontweight='bold')
@@ -917,13 +955,14 @@ if fullrange_depletion_data is not None and 'dft_x_broad' in st.session_state:
         cc_r = df_pcc[df_pcc["Region"] == "C≡C Stretch"]["PCC (r)"].values
         cc_r = cc_r[0] if len(cc_r) > 0 and not pd.isna(cc_r[0]) else None
         
-        if full_r is not None and full_r > 0.60 and fp_r is not None and fp_r > 0.40:
+        thresholds_dec = get_pcc_thresholds()
+        if full_r is not None and full_r > thresholds_dec["excellent"] and fp_r is not None and fp_r > thresholds_dec["good"]:
             st.success("🟢 **Candidate Structure:** Strong overall and fingerprint agreement. Consistent with this structure.")
-        elif full_r is not None and full_r > 0.40:
+        elif full_r is not None and full_r > thresholds_dec["good"]:
             st.warning("🟡 **Tentative Match:** Moderate overall agreement. Check C≡C region and aromatic CH pattern manually for confirmation.")
-        elif cc_r is not None and cc_r < 0.20:
+        elif cc_r is not None and cc_r < thresholds_dec["weak"]:
             st.error("🔴 **Rule Out:** C≡C stretch region shows very poor agreement — strong evidence against this structure.")
-        elif full_r is not None and full_r < 0.20:
+        elif full_r is not None and full_r < thresholds_dec["weak"]:
             st.error("🔴 **Rule Out:** Overall PCC too low. This structure is inconsistent with the experimental spectrum.")
         else:
             st.info("ℹ️ **Inconclusive:** Mixed scores across regions. Consider visual inspection and additional diagnostic regions.")
@@ -1015,7 +1054,7 @@ if fullrange_depletion_data is not None and len(st.session_state.get('dft_struct
         bw_frac = st.session_state.get('bw_frac', 0.007)
         x_min = st.session_state.get('x_min', 500.0)
         x_max = st.session_state.get('x_max', 2200.0)
-        shift = 0.0  # No shift for batch comparison
+        shift = st.session_state.get('shift_theory', 0.0)  # Use same alignment shift as single comparison
         
         # Get active diagnostic regions
         DIAGNOSTIC_REGIONS = get_diagnostic_regions()
@@ -1055,9 +1094,24 @@ if fullrange_depletion_data is not None and len(st.session_state.get('dft_struct
         # Create comparison DataFrame
         df_batch = pd.DataFrame(all_results)
         
-        # Calculate average PCC - use only valid (non-NaN) regions, excluding "Full Overlap"
-        # Get all region names except "Full Overlap"
-        scoring_regions = [r for r in DIAGNOSTIC_REGIONS.keys() if r != "Full Overlap"]
+        # Calculate average PCC - exclude "Full Overlap" (redundant with sub-regions)
+        # and detect/exclude subset regions to avoid double-counting
+        all_region_names = [r for r in DIAGNOSTIC_REGIONS.keys() if r != "Full Overlap"]
+        region_ranges = {r: DIAGNOSTIC_REGIONS[r] for r in all_region_names if DIAGNOSTIC_REGIONS[r] is not None}
+        
+        # Remove regions that are entirely contained within another region
+        scoring_regions = []
+        for name, rng in region_ranges.items():
+            is_subset = False
+            for other_name, other_rng in region_ranges.items():
+                if name != other_name and other_rng[0] <= rng[0] and other_rng[1] >= rng[1]:
+                    is_subset = True
+                    break
+            if not is_subset:
+                scoring_regions.append(name)
+        
+        if not scoring_regions:
+            scoring_regions = all_region_names  # fallback
         
         # For each structure, compute mean of non-NaN scores
         df_batch['Average PCC'] = df_batch[scoring_regions].mean(axis=1, skipna=True)
@@ -1115,8 +1169,9 @@ if fullrange_depletion_data is not None and len(st.session_state.get('dft_struct
         ax_batch.set_yticklabels(df_batch['filename'].values)
         ax_batch.set_xlabel('PCC Score (r)', fontsize=12)
         ax_batch.set_title('Multi-Structure PCC Comparison Across Diagnostic Regions', fontsize=14, fontweight='bold')
-        ax_batch.axvline(0.40, color='orange', linestyle='--', linewidth=1, alpha=0.5, label='Good (0.40)')
-        ax_batch.axvline(0.60, color='green', linestyle='--', linewidth=1, alpha=0.5, label='Excellent (0.60)')
+        thresholds_batch = get_pcc_thresholds()
+        ax_batch.axvline(thresholds_batch["good"], color='orange', linestyle='--', linewidth=1, alpha=0.5, label=f'Good ({thresholds_batch["good"]:.2f})')
+        ax_batch.axvline(thresholds_batch["excellent"], color='green', linestyle='--', linewidth=1, alpha=0.5, label=f'Excellent ({thresholds_batch["excellent"]:.2f})')
         ax_batch.legend(loc='lower right', fontsize=8, ncol=2)
         ax_batch.grid(True, axis='x', alpha=0.3)
         ax_batch.set_xlim(-0.2, 1.0)
