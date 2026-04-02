@@ -304,40 +304,105 @@ def parse_gaussian_out(content):
     return np.array(frequencies), np.array(intensities), {}
 
 def parse_gaussian_anharmonic(content):
-    """Parse Gaussian anharmonic frequency output files"""
-    frequencies = []
-    intensities = []
+    """
+    Parse Gaussian anharmonic frequency output files.
+    
+    Reads all three sections produced by Gaussian anharmonic calculations:
+      - Fundamental Bands:   Mode(n)        E(harm) E(anharm) I(harm) I(anharm)
+      - Overtones:           Mode(n)        E(harm) E(anharm) I(harm) I(anharm)
+      - Combination Bands:   Mode(n) Mode(m) E(harm) E(anharm) I(harm) I(anharm)
+    
+    Returns all bands merged into a single stick spectrum.
+    """
+    fundamentals = []
+    overtones = []
+    combinations = []
     
     lines = content.split('\n')
-    in_data_section = False
+    current_section = None  # 'fundamental', 'overtone', 'combination'
+    in_data = False
     
     for line in lines:
-        # Look for fundamental bands section
-        if 'Fundamental Bands' in line or 'Mode(n)' in line:
-            in_data_section = True
+        stripped = line.strip()
+        
+        # Detect section headers
+        if 'Fundamental Bands' in line:
+            current_section = 'fundamental'
+            in_data = False
+            continue
+        elif 'Overtones' in line and 'Combination' not in line:
+            current_section = 'overtone'
+            in_data = False
+            continue
+        elif 'Combination Bands' in line:
+            current_section = 'combination'
+            in_data = False
             continue
         
-        if in_data_section:
-            # Stop at empty line or section separator
-            if line.strip() == '' or '---' in line[:5]:
-                if frequencies:
-                    break
-                continue
-            
-            # Parse anharmonic data
-            # Format: "1(1)                  3481.635   3345.950    118.07814624    102.35434412"
-            # We want E(anharm) and I(anharm) - columns 2 and 4
-            parts = line.split()
-            if len(parts) >= 5 and '(' in parts[0]:
-                try:
-                    freq_anharm = float(parts[2])  # E(anharm)
-                    inten_anharm = float(parts[4])  # I(anharm)
-                    frequencies.append(freq_anharm)
-                    intensities.append(inten_anharm)
-                except (ValueError, IndexError):
-                    continue
+        if current_section is None:
+            continue
+        
+        # Skip header/separator lines, then start reading data
+        if 'Mode(n)' in line or 'Mode' in line:
+            in_data = True
+            continue
+        if stripped.startswith('---') or stripped.startswith('==='):
+            in_data = True
+            continue
+        
+        # Empty line → end of current section data
+        if stripped == '':
+            if in_data:
+                in_data = False
+                current_section = None
+            continue
+        
+        if not in_data:
+            continue
+        
+        parts = line.split()
+        
+        try:
+            if current_section == 'fundamental':
+                # Fundamentals: mode  E(harm)  E(anharm)  I(harm)  I(anharm)
+                # 5 parts:      [0]   [1]      [2]        [3]      [4]
+                if len(parts) >= 5 and '(' in parts[0]:
+                    freq = float(parts[2])   # E(anharm)
+                    inten = float(parts[4])  # I(anharm)
+                    fundamentals.append((freq, inten))
+            elif current_section == 'overtone':
+                # Overtones: mode  E(harm)  E(anharm)  I(anharm)   (no I(harm) column)
+                # 4 parts:   [0]   [1]      [2]        [3]
+                if len(parts) >= 4 and '(' in parts[0]:
+                    freq = float(parts[2])   # E(anharm)
+                    inten = float(parts[3])  # I(anharm)
+                    overtones.append((freq, inten))
+            elif current_section == 'combination':
+                # Combinations: mode1  mode2  E(harm)  E(anharm)  I(anharm)   (no I(harm))
+                # 5 parts:      [0]    [1]    [2]      [3]        [4]
+                if len(parts) >= 5 and '(' in parts[0] and '(' in parts[1]:
+                    freq = float(parts[3])   # E(anharm)
+                    inten = float(parts[4])  # I(anharm)
+                    combinations.append((freq, inten))
+        except (ValueError, IndexError):
+            continue
     
-    return np.array(frequencies), np.array(intensities), {'type': 'anharmonic'}
+    # Merge all bands into single arrays
+    all_bands = fundamentals + overtones + combinations
+    if not all_bands:
+        return np.array([]), np.array([]), {'type': 'anharmonic'}
+    
+    frequencies = np.array([b[0] for b in all_bands])
+    intensities = np.array([b[1] for b in all_bands])
+    
+    metadata = {
+        'type': 'anharmonic',
+        'n_fundamentals': len(fundamentals),
+        'n_overtones': len(overtones),
+        'n_combinations': len(combinations),
+    }
+    
+    return frequencies, intensities, metadata
 
 def parse_orca_stick(content):
     """Parse ORCA .out.ir.stk stick spectrum file"""
@@ -633,12 +698,34 @@ if 'dft_frequencies' in st.session_state:
         key_suffix="dft_spectrum",
         description="DFT-calculated IR spectrum with FELIX-style broadening"
     )
+    
+    with st.expander("ℹ️ About FELIX-Style Broadening"):
+        st.markdown("""
+        ### Frequency-Proportional Broadening
+        
+        Unlike traditional constant FWHM broadening, FELIX uses FWHM that scales linearly with frequency:
+        
+        **FWHM(ν) = bw_frac × ν**
+        
+        Where `bw_frac = 0.007` (0.7%) represents the FELIX FEL's spectral bandwidth.
+        
+        #### Physical Meaning
+        The bandwidth varies across the spectrum:
+        - **500 cm⁻¹** → FWHM = 3.5 cm⁻¹
+        - **1000 cm⁻¹** → FWHM = 7.0 cm⁻¹
+        - **1500 cm⁻¹** → FWHM = 10.5 cm⁻¹
+        - **3000 cm⁻¹** → FWHM = 21.0 cm⁻¹
+        
+        This frequency-proportional resolution is characteristic of FEL instruments and provides
+        more physically accurate comparison with FELIX experimental data than constant FWHM broadening.
+        """)
 
 # ========================================================================================
-# DIAGNOSTIC REGIONS CONFIGURATION
+# PCC CONFIGURATION: Diagnostic Regions & Thresholds
 # ========================================================================================
 st.markdown("---")
-st.markdown("## ⚙️ Configure Diagnostic Regions for PCC Scoring")
+st.markdown("## ⚙️ PCC Scoring Configuration")
+st.caption("Configure diagnostic regions and score thresholds **before** running comparisons. These settings apply to both single and batch modes.")
 
 with st.expander("🎯 Customize Spectral Regions (Optional)", expanded=False):
     st.markdown("""
@@ -729,6 +816,52 @@ with st.expander("🎯 Customize Spectral Regions (Optional)", expanded=False):
         ])
         st.dataframe(default_df, use_container_width=True, hide_index=True)
 
+with st.expander("📏 Customize PCC Thresholds", expanded=False):
+    st.caption("Set the PCC score boundaries for each verdict category. Values are Pearson r (-1 to 1).")
+    thr_col1, thr_col2, thr_col3 = st.columns(3)
+    with thr_col1:
+        st.session_state["pcc_threshold_excellent"] = st.number_input(
+            "Excellent ✅ (r ≥)", value=st.session_state.get("pcc_threshold_excellent", DEFAULT_PCC_THRESHOLDS["excellent"]),
+            min_value=0.0, max_value=1.0, step=0.05, format="%.2f", key="_pcc_thr_exc"
+        )
+    with thr_col2:
+        st.session_state["pcc_threshold_good"] = st.number_input(
+            "Good 🟡 (r ≥)", value=st.session_state.get("pcc_threshold_good", DEFAULT_PCC_THRESHOLDS["good"]),
+            min_value=0.0, max_value=1.0, step=0.05, format="%.2f", key="_pcc_thr_good"
+        )
+    with thr_col3:
+        st.session_state["pcc_threshold_weak"] = st.number_input(
+            "Weak ⚠️ (r ≥)", value=st.session_state.get("pcc_threshold_weak", DEFAULT_PCC_THRESHOLDS["weak"]),
+            min_value=0.0, max_value=1.0, step=0.05, format="%.2f", key="_pcc_thr_weak"
+        )
+    st.caption("Below the **Weak** threshold → **Poor / Rule Out ❌**")
+
+with st.expander("ℹ️ About PCC Scoring for IR-UV Spectra", expanded=False):
+    thresholds_info = get_pcc_thresholds()
+    st.markdown(f"""
+    ### Pearson Correlation Coefficient (PCC) for Peak Position Matching
+    
+    **What it measures:**
+    - Correlation between experimental and theoretical peak *positions*
+    - Both spectra normalized to [0,1] before comparison → **intensity-independent**
+    - Focus on spectral pattern/shape matching
+    
+    **Current Thresholds:**
+    - **r ≥ {thresholds_info['excellent']:.2f}:** Excellent match (structure candidate)
+    - **r ≥ {thresholds_info['good']:.2f}:** Good match (tentative)
+    - **r ≥ {thresholds_info['weak']:.2f}:** Weak match
+    - **r < {thresholds_info['weak']:.2f}:** Poor match (likely rule out)
+    
+    *Default thresholds lower than absorption IR (Von der Esch 0.75/0.50) due to IR-UV ion dip spectroscopy differences.*
+    
+    **Best Practices:**
+    - Use **regional scores** for isomer discrimination (C≡C stretch, aromatic CH)
+    - Compare **multiple candidate structures** — highest PCC wins
+    - **Visual inspection** remains critical — PCC is a guide, not absolute truth
+    - Low p-values (< 0.05) indicate statistically significant correlation
+    - Fingerprint region captures overall skeletal differences
+    """)
+
 # Experimental vs Theoretical Comparison
 st.markdown("---")
 st.markdown("## 🔀 Compare with Experimental Data")
@@ -744,10 +877,10 @@ if fullrange_depletion_data is not None and 'dft_x_broad' in st.session_state:
     st.markdown("#### Alignment Options")
     col1, col2 = st.columns(2)
     with col1:
-        shift_theory = st.number_input("Shift Theory (cm⁻¹)", value=0.0, step=1.0, format="%.1f",
-                                      help="Shift theoretical spectrum for alignment")
+        shift_theory = st.number_input("Shift Theory (cm⁻¹)", value=st.session_state.get("shift_theory", 0.0), step=1.0, format="%.1f",
+                                      help="Shift theoretical spectrum for alignment", key="shift_theory")
     with col2:
-        invert_theory = st.checkbox("Invert Theory", value=False, 
+        invert_theory = st.checkbox("Invert Theory", value=False, key="invert_theory",
                                    help="Invert theoretical spectrum if needed")
     
     # Plot comparison
@@ -849,31 +982,6 @@ if fullrange_depletion_data is not None and 'dft_x_broad' in st.session_state:
         # ========================================================================================
         st.markdown("---")
         st.markdown("### 📐 Quantitative Similarity - Pearson Correlation (PCC)")
-        st.caption("""
-        **Position-based scoring for isomer discrimination.** Intensity differences are normalized out.  
-        ⚠️ Note: Thresholds adjusted for IR-UV spectra (lower than absorption IR literature values).
-        """)
-        
-        # Customizable PCC thresholds
-        with st.expander("⚙️ Customize PCC Thresholds", expanded=False):
-            st.caption("Set the PCC score boundaries for each verdict category. Values are Pearson r (-1 to 1).")
-            thr_col1, thr_col2, thr_col3 = st.columns(3)
-            with thr_col1:
-                st.session_state["pcc_threshold_excellent"] = st.number_input(
-                    "Excellent ✅ (r ≥)", value=st.session_state.get("pcc_threshold_excellent", DEFAULT_PCC_THRESHOLDS["excellent"]),
-                    min_value=0.0, max_value=1.0, step=0.05, format="%.2f", key="_pcc_thr_exc"
-                )
-            with thr_col2:
-                st.session_state["pcc_threshold_good"] = st.number_input(
-                    "Good 🟡 (r ≥)", value=st.session_state.get("pcc_threshold_good", DEFAULT_PCC_THRESHOLDS["good"]),
-                    min_value=0.0, max_value=1.0, step=0.05, format="%.2f", key="_pcc_thr_good"
-                )
-            with thr_col3:
-                st.session_state["pcc_threshold_weak"] = st.number_input(
-                    "Weak ⚠️ (r ≥)", value=st.session_state.get("pcc_threshold_weak", DEFAULT_PCC_THRESHOLDS["weak"]),
-                    min_value=0.0, max_value=1.0, step=0.05, format="%.2f", key="_pcc_thr_weak"
-                )
-            st.caption("Below the **Weak** threshold → **Poor / Rule Out ❌**")
         
         # Compute PCC for all diagnostic regions
         DIAGNOSTIC_REGIONS = get_diagnostic_regions()
@@ -966,35 +1074,6 @@ if fullrange_depletion_data is not None and 'dft_x_broad' in st.session_state:
             st.error("🔴 **Rule Out:** Overall PCC too low. This structure is inconsistent with the experimental spectrum.")
         else:
             st.info("ℹ️ **Inconclusive:** Mixed scores across regions. Consider visual inspection and additional diagnostic regions.")
-        
-        with st.expander("ℹ️ About PCC Scoring for IR-UV Spectra"):
-            st.markdown("""
-            ### Pearson Correlation Coefficient (PCC) for Peak Position Matching
-            
-            **What it measures:**
-            - Correlation between experimental and theoretical peak *positions*
-            - Both spectra normalized to [0,1] before comparison → **intensity-independent**
-            - Focus on spectral pattern/shape matching
-            
-            **Adjusted Thresholds (IR-UV Spectra):**
-            - **r ≥ 0.60:** Excellent match (structure candidate)
-            - **r ≥ 0.40:** Good match (tentative)
-            - **r ≥ 0.20:** Weak match
-            - **r < 0.20:** Poor match (likely rule out)
-            
-            *Note: Thresholds lower than absorption IR (Von der Esch 0.75/0.50) due to IR-UV ion dip spectroscopy differences.*
-            
-            **Best Practices:**
-            - Use **regional scores** for isomer discrimination (C≡C stretch, aromatic CH)
-            - Compare **multiple candidate structures** - highest PCC wins
-            - **Visual inspection** remains critical - PCC is a guide, not absolute truth
-            - Low p-values (< 0.05) indicate statistically significant correlation
-            
-            **Why it works for your C₁₁H₈ isomers:**
-            - C≡C stretch position (2050-2200 cm⁻¹) is isomer-specific
-            - Aromatic CH out-of-plane bends (700-900 cm⁻¹) vary by substitution pattern
-            - Fingerprint region captures overall skeletal differences
-            """)
         
         # Save comparison data
         if st.checkbox("💾 Save Comparison Data"):
@@ -1253,9 +1332,9 @@ Rankings:
             for _, row in df_batch.iterrows():
                 summary_text += f"\n{row['Rank']:.0f}. {row['filename']}"
                 summary_text += f"\n   Average PCC: {row['Average PCC']:.3f}"
-                summary_text += f"\n   Full Overlap: {row.get('Full Overlap', np.nan):.3f}"
-                summary_text += f"\n   Fingerprint: {row.get('Fingerprint', np.nan):.3f}"
-                summary_text += f"\n   C≡C Stretch: {row.get('C≡C Stretch', np.nan):.3f}"
+                for region_name in DIAGNOSTIC_REGIONS.keys():
+                    val = row.get(region_name, np.nan)
+                    summary_text += f"\n   {region_name}: {val:.3f}" if not np.isnan(val) else f"\n   {region_name}: N/A"
                 summary_text += "\n"
             
             report_filename = os.path.join(file_directory, f"batch_pcc_report_{timestamp}.txt")
@@ -1266,25 +1345,3 @@ Rankings:
 
 elif len(st.session_state.get('dft_structures', [])) <= 1:
     st.info("💡 **Tip:** Upload multiple DFT files to enable batch comparison mode and rank candidate structures.")
-
-# Info box
-with st.expander("ℹ️ About FELIX-Style Broadening"):
-    st.markdown("""
-    ### Frequency-Proportional Broadening
-    
-    Unlike traditional constant FWHM broadening, FELIX uses FWHM that scales linearly with frequency:
-    
-    **FWHM(ν) = bw_frac × ν**
-    
-    Where `bw_frac = 0.007` (0.7%) represents the FELIX FEL's spectral bandwidth.
-    
-    #### Physical Meaning
-    The bandwidth varies across the spectrum:
-    - **500 cm⁻¹** → FWHM = 3.5 cm⁻¹
-    - **1000 cm⁻¹** → FWHM = 7.0 cm⁻¹
-    - **1500 cm⁻¹** → FWHM = 10.5 cm⁻¹
-    - **3000 cm⁻¹** → FWHM = 21.0 cm⁻¹
-    
-    This frequency-proportional resolution is characteristic of FEL instruments and provides
-    more physically accurate comparison with FELIX experimental data than constant FWHM broadening.
-    """)
