@@ -354,28 +354,42 @@ def parse_gaussian_anharmonic(content):
         
         parts = line.split()
         
+        # Need at least a mode identifier to be a data line
+        if not parts or '(' not in parts[0]:
+            continue
+        
         try:
+            # Extract numeric values, skipping mode identifiers (contain '(')
+            # and text fields like Irrep labels
+            nums = []
+            for p in parts:
+                if '(' in p:
+                    continue
+                try:
+                    nums.append(float(p))
+                except ValueError:
+                    continue
+            
+            # nums should be [E_harm, E_anharm, I_harm, I_anharm] (4 values)
+            # or             [E_harm, E_anharm, I_anharm]          (3 values)
+            if len(nums) >= 4:
+                freq = nums[1]    # E(anharm)
+                inten = nums[3]   # I(anharm)
+            elif len(nums) >= 3:
+                freq = nums[1]    # E(anharm)
+                inten = nums[2]   # I(anharm) when no I(harm) column
+            elif len(nums) >= 2:
+                freq = nums[0]
+                inten = nums[1]
+            else:
+                continue
+            
             if current_section == 'fundamental':
-                # Fundamentals: mode  E(harm)  E(anharm)  I(harm)  I(anharm)
-                # 5 parts:      [0]   [1]      [2]        [3]      [4]
-                if len(parts) >= 5 and '(' in parts[0]:
-                    freq = float(parts[2])   # E(anharm)
-                    inten = float(parts[4])  # I(anharm)
-                    fundamentals.append((freq, inten))
+                fundamentals.append((freq, inten))
             elif current_section == 'overtone':
-                # Overtones: mode  E(harm)  E(anharm)  I(anharm)   (no I(harm) column)
-                # 4 parts:   [0]   [1]      [2]        [3]
-                if len(parts) >= 4 and '(' in parts[0]:
-                    freq = float(parts[2])   # E(anharm)
-                    inten = float(parts[3])  # I(anharm)
-                    overtones.append((freq, inten))
+                overtones.append((freq, inten))
             elif current_section == 'combination':
-                # Combinations: mode1  mode2  E(harm)  E(anharm)  I(anharm)   (no I(harm))
-                # 5 parts:      [0]    [1]    [2]      [3]        [4]
-                if len(parts) >= 5 and '(' in parts[0] and '(' in parts[1]:
-                    freq = float(parts[3])   # E(anharm)
-                    inten = float(parts[4])  # I(anharm)
-                    combinations.append((freq, inten))
+                combinations.append((freq, inten))
         except (ValueError, IndexError):
             continue
     
@@ -387,11 +401,19 @@ def parse_gaussian_anharmonic(content):
     frequencies = np.array([b[0] for b in all_bands])
     intensities = np.array([b[1] for b in all_bands])
     
+    # Build per-band type labels for colour-coded plotting
+    band_types = (
+        ['fundamental'] * len(fundamentals)
+        + ['overtone'] * len(overtones)
+        + ['combination'] * len(combinations)
+    )
+    
     metadata = {
         'type': 'anharmonic',
         'n_fundamentals': len(fundamentals),
         'n_overtones': len(overtones),
         'n_combinations': len(combinations),
+        'band_types': band_types,
     }
     
     return frequencies, intensities, metadata
@@ -457,7 +479,7 @@ def parse_dft_file(uploaded_file):
         return parse_custom_report(content)
     elif 'O   R   C   A' in content[:1000]:
         return parse_orca_out(content)
-    elif 'Fundamental Bands' in content[:2000]:
+    elif 'Fundamental Bands' in content or 'Overtones' in content or 'Combination Bands' in content:
         return parse_gaussian_anharmonic(content)
     elif 'Gaussian' in content[:1000] or 'Frequencies --' in content:
         return parse_gaussian_out(content)
@@ -509,12 +531,18 @@ if uploaded_files:
             st.markdown("### 📋 Loaded Structures")
             summary_data = []
             for i, struct in enumerate(structures):
-                summary_data.append({
+                row = {
                     '#': i + 1,
                     'File': struct['filename'],
                     'Modes': len(struct['frequencies']),
                     'Freq Range (cm⁻¹)': f"{struct['frequencies'].min():.1f} - {struct['frequencies'].max():.1f}"
-                })
+                }
+                if struct['metadata'].get('type') == 'anharmonic':
+                    nf = struct['metadata'].get('n_fundamentals', 0)
+                    no = struct['metadata'].get('n_overtones', 0)
+                    nc = struct['metadata'].get('n_combinations', 0)
+                    row['Breakdown'] = f"{nf} fund + {no} over + {nc} comb"
+                summary_data.append(row)
             st.dataframe(pd.DataFrame(summary_data), use_container_width=True, hide_index=True)
             
             # Select active structure for detailed view
@@ -536,23 +564,29 @@ if uploaded_files:
                 cols = st.columns(3)
                 idx = 0
                 for key, value in selected_struct['metadata'].items():
+                    if key == 'band_types':  # skip large list
+                        continue
                     with cols[idx % 3]:
                         st.metric(key.replace('_', ' ').title(), value)
                     idx += 1
             
             # Display raw stick spectrum data
             with st.expander(f"📊 View {selected_struct['filename']} Raw Spectrum Data"):
-                df_spectrum = pd.DataFrame({
+                spec_dict = {
                     'Mode': range(1, len(selected_struct['frequencies']) + 1),
                     'Frequency (cm⁻¹)': selected_struct['frequencies'],
-                    'Intensity (km/mol)': selected_struct['intensities']
-                })
+                    'Intensity (km/mol)': selected_struct['intensities'],
+                }
+                if 'band_types' in selected_struct['metadata']:
+                    spec_dict['Band Type'] = selected_struct['metadata']['band_types']
+                df_spectrum = pd.DataFrame(spec_dict)
                 st.dataframe(df_spectrum, height=300)
             
             # Store primary structure (for single file workflow compatibility)
             st.session_state['dft_frequencies'] = selected_struct['frequencies']
             st.session_state['dft_intensities'] = selected_struct['intensities']
             st.session_state['dft_metadata'] = selected_struct['metadata']
+            st.session_state['dft_band_types'] = selected_struct['metadata'].get('band_types', None)
             st.session_state['selected_struct_idx'] = struct_idx
         else:
             st.error("❌ No valid DFT data found in uploaded files.")

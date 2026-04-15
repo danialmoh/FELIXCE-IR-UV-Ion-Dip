@@ -1589,6 +1589,15 @@ if run_button:
         # if not smoothing, just overwrite with the raw results
         st.session_state.fullrange_depletion_data = fullrange_depletion_data
 
+    # Build smoothing tag for filenames and labels
+    if st.session_state.get("data_display_option") == "Smoothed":
+        _sw = st.session_state.get("smoothing_window", 9)
+        smooth_tag = f"_smoothed{_sw}"      # for filenames
+        smooth_label = f"Smoothed (SG window={_sw})"  # for plot titles / annotations
+    else:
+        smooth_tag = ""                       # original data
+        smooth_label = "Original"              # for plot titles / annotations
+
     st.session_state.analysis_done = True
     orig_fullrange_data.columns = [
         "wavenumber",
@@ -1625,9 +1634,9 @@ if run_button:
     st.write(fullrange_depletion_data)
 
     if save_output:
-        filename_fullrange_depletion = f"fullrange_depletion_data_{complex}_{int(data[0,0])}-{int(data[-1,0])}cm⁻¹.csv"
+        filename_fullrange_depletion = f"fullrange_depletion_data_{complex}_{int(data[0,0])}-{int(data[-1,0])}cm⁻¹{smooth_tag}.csv"
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename_fullrange_depletion_both = f"fullrange_depletion_both_{complex}_{int(data[0,0])}-{int(data[-1,0])}cm⁻¹_{timestamp}.csv"
+        filename_fullrange_depletion_both = f"fullrange_depletion_both_{complex}_{int(data[0,0])}-{int(data[-1,0])}cm⁻¹{smooth_tag}_{timestamp}.csv"
         export_filename_fullrange_depletion = os.path.join(file_directory, filename_fullrange_depletion)
         export_filename_fullrange_depletion_both = os.path.join(file_directory, filename_fullrange_depletion_both)
         fullrange_depletion_data.to_csv(export_filename_fullrange_depletion, index=False)
@@ -1740,7 +1749,7 @@ if run_button:
         st.plotly_chart(fig)
         if save_output:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            html_filename = f"mass_spectra_{complex}_{int(data[0,0])}-{int(data[-1,0])}_{timestamp}.html"
+            html_filename = f"mass_spectra_{complex}_{int(data[0,0])}-{int(data[-1,0])}{smooth_tag}_{timestamp}.html"
             output_html_filename = os.path.join(file_directory, html_filename)
             fig.write_html(output_html_filename, include_plotlyjs='cdn')
             st.write(f"Interactive Mass Spectra plot saved as HTML @ {output_html_filename}")
@@ -1777,7 +1786,7 @@ if run_button:
         
         if save_output:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_png_filename = os.path.join(file_directory, f"mass_spectra_{complex}_{int(data[0,0])}-{int(data[-1,0])}_{timestamp}.png")
+            output_png_filename = os.path.join(file_directory, f"mass_spectra_{complex}_{int(data[0,0])}-{int(data[-1,0])}{smooth_tag}_{timestamp}.png")
             fig_static.savefig(output_png_filename, dpi=300)
     
     # ---------- Tab 2: Depletion Plot ----------
@@ -1832,13 +1841,13 @@ if run_button:
             yaxis=dict(range=[depletion_ymin, depletion_ymax]),
             xaxis_title=xlabel_dep,
             yaxis_title="Intensity",
-            title=fullrange_depletion_data.columns[3] + " " + complex,
+            title=f"{fullrange_depletion_data.columns[3]} {complex} [{smooth_label}]",
             legend=dict(x=0.8, y=0.9)
         )
         st.plotly_chart(fig_dep)
         if save_output:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            html_filename = f"depletion_{complex}_{int(data[0,0])}-{int(data[-1,0])}_{timestamp}.html"
+            html_filename = f"depletion_{complex}_{int(data[0,0])}-{int(data[-1,0])}{smooth_tag}_{timestamp}.html"
             output_html_filename = os.path.join(file_directory, html_filename)
             fig_dep.write_html(output_html_filename, include_plotlyjs='cdn')
             st.write(f"Interactive Depletion plot saved as HTML @ {output_html_filename}")
@@ -1850,7 +1859,8 @@ if run_button:
         ax.hlines(zero_line_depletion, xmin=x_range_dep_cal[0], xmax=x_range_dep_cal[1], color="lime")
         mass_label = [round(item, 2) for item in list_mass_isotope]
         textstr = (f"Complex: {complex} \nMass peaks: {mass_label} amu \nIntegration width = {isotope_scan_width} amu\n"
-                   f"Baseline reference: {baseline_reference} amu \nBaseline width = {baseline_width} amu")
+                   f"Baseline reference: {baseline_reference} amu \nBaseline width = {baseline_width} amu\n"
+                   f"Data: {smooth_label}")
         props = dict(boxstyle='round', facecolor='wheat', alpha=0.5)
         ax.text(0.6, 0.25, textstr, transform=plt.gca().transAxes, fontsize=5,
                 verticalalignment='top', bbox=props)
@@ -1862,14 +1872,14 @@ if run_button:
         # Add to Report button
         add_plot_to_report_button(
             fig_dep_static,
-            f"Depletion Full Range - {complex}",
+            f"Depletion Full Range - {complex} [{smooth_label}]",
             key_suffix="depletion_full",
-            description=f"Depletion spectrum full range for {complex}"
+            description=f"Depletion spectrum full range for {complex} ({smooth_label})"
         )
         
         if save_output:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_png_filename = os.path.join(file_directory, f"depletion_{complex}_{int(data[0,0])}-{int(data[-1,0])}_{timestamp}.png")
+            output_png_filename = os.path.join(file_directory, f"depletion_{complex}_{int(data[0,0])}-{int(data[-1,0])}{smooth_tag}_{timestamp}.png")
             fig_dep_static.savefig(output_png_filename, dpi=300)
     
     # ---------- Tab 3: -ln(Depletion) Plot ----------
@@ -1923,13 +1933,13 @@ if run_button:
             yaxis=dict(range=[ln_depletion_ymin, ln_depletion_ymax]),
             xaxis_title=xlabel_ln,
             yaxis_title="Intensity",
-            title=fullrange_depletion_data.columns[4] + " " + complex,
+            title=f"{fullrange_depletion_data.columns[4]} {complex} [{smooth_label}]",
             legend=dict(x=0.8, y=0.9)
         )
         st.plotly_chart(fig_ln)
         if save_output:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            html_filename = f"ln_depletion_{complex}_{int(data[0,0])}-{int(data[-1,0])}_{timestamp}.html"
+            html_filename = f"ln_depletion_{complex}_{int(data[0,0])}-{int(data[-1,0])}{smooth_tag}_{timestamp}.html"
             output_html_filename = os.path.join(file_directory, html_filename)
             fig_ln.write_html(output_html_filename, include_plotlyjs='cdn')
             st.write(f"Interactive -ln(Depletion) plot saved as HTML @ {output_html_filename}")
@@ -1941,7 +1951,8 @@ if run_button:
         ax.hlines(zero_line_ln, xmin=x_range_ln_cal[0], xmax=x_range_ln_cal[1], color="lime")
         mass_label = [round(item, 2) for item in list_mass_isotope]
         textstr = (f"Complex: {complex} \nMass peaks: {mass_label} amu \nIntegration width = {isotope_scan_width} amu\n"
-                   f"Baseline reference: {baseline_reference} amu \nBaseline width = {baseline_width} amu")
+                   f"Baseline reference: {baseline_reference} amu \nBaseline width = {baseline_width} amu\n"
+                   f"Data: {smooth_label}")
         props = dict(boxstyle='round', facecolor='wheat', alpha=0.5)
         ax.text(0.01, 0.99, textstr, transform=plt.gca().transAxes, fontsize=5,
                 verticalalignment='top', bbox=props)
@@ -1953,14 +1964,14 @@ if run_button:
         # Add to Report button
         add_plot_to_report_button(
             fig_ln_static,
-            f"-ln(Depletion) Full Range - {complex}",
+            f"-ln(Depletion) Full Range - {complex} [{smooth_label}]",
             key_suffix="ln_depletion_full",
-            description=f"-ln(Depletion) spectrum full range for {complex}"
+            description=f"-ln(Depletion) spectrum full range for {complex} ({smooth_label})"
         )
         
         if save_output:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_png_filename = os.path.join(file_directory, f"ln_depletion_{complex}_{int(data[0,0])}-{int(data[-1,0])}_{timestamp}.png")
+            output_png_filename = os.path.join(file_directory, f"ln_depletion_{complex}_{int(data[0,0])}-{int(data[-1,0])}{smooth_tag}_{timestamp}.png")
             fig_ln_static.savefig(output_png_filename, dpi=300)
     
     # ---------- Tab 4: PAH Comparison ----------

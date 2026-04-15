@@ -59,6 +59,19 @@ class ProcessData_REMPI_HDF5:
             current_file = ReadData_REMPI_HDF5(file)
             current_file.extract_wavelengths()
             current_file.extract_signal()
+            
+            # Remove consecutive duplicate wavelengths (and corresponding signals)
+            # HDF5 files often contain a duplicate first entry
+            if len(current_file.wavelengths) > 1:
+                dedup_wl = [current_file.wavelengths[0]]
+                dedup_sig = [current_file.signal[0]]
+                for j in range(1, len(current_file.wavelengths)):
+                    if current_file.wavelengths[j] != current_file.wavelengths[j - 1]:
+                        dedup_wl.append(current_file.wavelengths[j])
+                        dedup_sig.append(current_file.signal[j])
+                current_file.wavelengths = dedup_wl
+                current_file.signal = dedup_sig
+            
             self.data.append(current_file)
         return self.data
 
@@ -257,11 +270,14 @@ class ProcessData_REMPI_HDF5:
         # Create DataFrame
         self.compiled_dataframe = pd.DataFrame(data_dict)
         
-        # Sort columns by wavelength
+        # Sort columns by wavelength (numeric sort)
         self.compiled_dataframe = self.compiled_dataframe.reindex(
-            sorted(self.compiled_dataframe.columns), 
+            sorted(self.compiled_dataframe.columns, key=float), 
             axis=1
         )
+
+        # Convert column names to strings to avoid mixed types with 'Summed'
+        self.compiled_dataframe.columns = [str(c) for c in self.compiled_dataframe.columns]
 
         # Add summed column
         self.compiled_dataframe['Summed'] = self.compiled_dataframe.sum(axis=1)

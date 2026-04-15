@@ -113,7 +113,7 @@ with col1:
     ))
 
 with col3:
-    if st.button("✨ Register parameters and preview baseline!", use_container_width=True):
+    if st.button("✨ Register parameters and preview baseline!", width='stretch'):
         # Get parameters
         t_off = st.session_state.get("rempi_t_off", 58)
         alpha = st.session_state.get("rempi_alpha", 7.6987e-7)
@@ -300,7 +300,7 @@ with col3:
             # Add x-axis title only to bottom subplot
             fig.update_xaxes(title_text="Mass (amu)", row=2, col=1)
             
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
         
         with tab2:
             # Static matplotlib plot
@@ -350,7 +350,7 @@ st.markdown("---")
 # Apply baseline correction to full dataset
 st.markdown("### Apply Baseline Correction to Full Dataset")
 
-if st.button("📏 Apply baseline correction to all wavelengths", use_container_width=True):
+if st.button("📏 Apply baseline correction to all wavelengths", width='stretch'):
     
     if "rempi_x_mass" not in st.session_state:
         st.error("Please register parameters first by clicking the button above.", icon="🚫")
@@ -387,7 +387,7 @@ if "rempi_baseline_corrected" in st.session_state:
     # Plot summed spectrum with Plotly
     st.markdown("### Summed Spectrum (Baseline Corrected)")
     
-    if st.button("📊 Plot Summed Spectrum (Interactive)", use_container_width=True):
+    if st.button("📊 Plot Summed Spectrum (Interactive)", width='stretch'):
         x_mass = st.session_state["rempi_x_mass"]
         summed_signal = corrected_df["Summed"].values
         molecule_mass = st.session_state.get("rempi_molecule_mass", 100)
@@ -441,7 +441,7 @@ if "rempi_baseline_corrected" in st.session_state:
         # Zoom to molecule mass region by default
         fig.update_xaxes(range=[molecule_mass - 20, molecule_mass + 20])
         
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
         
         # Export options
         col_export1, col_export2 = st.columns(2)
@@ -493,7 +493,7 @@ if "rempi_baseline_corrected" in st.session_state:
     with col_range2:
         mass_max_2d = st.number_input("Max mass (amu)", value=float(np.max(x_mass)), key="heatmap_mass_max_preset")
     
-    if st.button("🗺️ Generate 2D Heatmap", use_container_width=True):
+    if st.button("🗺️ Generate 2D Heatmap", width='stretch'):
         x_mass = st.session_state["rempi_x_mass"]
         
         # Get only wavelength columns (exclude 'Summed')
@@ -584,7 +584,7 @@ if "rempi_baseline_corrected" in st.session_state:
                     yaxis=dict(showgrid=False)
                 )
                 
-                st.plotly_chart(fig_zoom, use_container_width=True)
+                st.plotly_chart(fig_zoom, width='stretch')
                 
                 # Export options for zoomed heatmap
                 col_exp_zoom1, col_exp_zoom2 = st.columns(2)
@@ -676,7 +676,7 @@ if "rempi_baseline_corrected" in st.session_state:
             )
         
         # Detect peaks button
-        if st.button("🔍 Detect Peaks & Preview", use_container_width=True):
+        if st.button("🔍 Detect Peaks & Preview", width='stretch'):
             from scipy.signal import find_peaks
             
             # Detect peaks
@@ -792,7 +792,7 @@ if "rempi_baseline_corrected" in st.session_state:
                 showlegend=True
             )
             
-            st.plotly_chart(fig_preview, use_container_width=True)
+            st.plotly_chart(fig_preview, width='stretch')
             
             # Show peak table
             peak_table = pd.DataFrame({
@@ -802,7 +802,7 @@ if "rempi_baseline_corrected" in st.session_state:
                 "Range Min": [r[0] for r in peak_ranges],
                 "Range Max": [r[1] for r in peak_ranges]
             })
-            st.dataframe(peak_table, use_container_width=True)
+            st.dataframe(peak_table, width='stretch')
             
             # Normalization method selection
             st.markdown("#### Normalization Method")
@@ -815,7 +815,7 @@ if "rempi_baseline_corrected" in st.session_state:
             )
             
             # Generate normalized heatmap button
-            if st.button("🎨 Generate Peak-Normalized Heatmap", use_container_width=True):
+            if st.button("🎨 Generate Peak-Normalized Heatmap", width='stretch'):
                 # Get the 2D data
                 if "rempi_compiled_dataframe" in st.session_state:
                     compiled_df = st.session_state["rempi_compiled_dataframe"]
@@ -978,7 +978,7 @@ if "rempi_baseline_corrected" in st.session_state:
                     yaxis=dict(showgrid=False)
                 )
                 
-                st.plotly_chart(fig_norm, use_container_width=True)
+                st.plotly_chart(fig_norm, width='stretch')
                 
                 # Export options
                 col_exp_norm1, col_exp_norm2 = st.columns(2)
@@ -1035,10 +1035,13 @@ if "rempi_baseline_corrected" in st.session_state:
                 key="action_spectrum_tolerance"
             )
         
-        # Get wavelength columns
-        wavelength_cols = [col for col in corrected_df.columns if col != 'Summed']
+        # Get wavelength columns (prefer baseline-corrected 'bc_' columns)
+        wavelength_cols = [col for col in corrected_df.columns if col != 'Summed' and str(col).startswith('bc_')]
+        if len(wavelength_cols) == 0:
+            # Fallback: include all except 'Summed'
+            wavelength_cols = [col for col in corrected_df.columns if col != 'Summed']
         
-        if st.button("📊 Plot 1D Action Spectrum", use_container_width=True):
+        if st.button("📊 Plot 1D Action Spectrum", width='stretch'):
             # Store parameters in session state
             st.session_state["plot_1d_action"] = {
                 "target_mass": target_mass,
@@ -1053,20 +1056,23 @@ if "rempi_baseline_corrected" in st.session_state:
             mass_tolerance = params["mass_tolerance"]
             wavelength_cols = params["wavelength_cols"]
             
-            # Parse wavelengths from column names
-            wavelengths = []
-            for col in wavelength_cols:
-                col_str = str(col)
-                if col_str.startswith('bc_'):
-                    col_str = col_str[3:]
-                try:
-                    wavelengths.append(float(col_str))
-                except ValueError:
-                    import re
-                    match = re.search(r'[\d.]+', col_str)
-                    if match:
-                        wavelengths.append(float(match.group()))
-            wavelengths = np.array(wavelengths)
+            # Helper: parse numeric wavelength values from column labels
+            def _parse_wavelengths(cols):
+                vals = []
+                for c in cols:
+                    s = str(c)
+                    if s.startswith('bc_'):
+                        s = s[3:]
+                    try:
+                        vals.append(float(s))
+                    except ValueError:
+                        import re
+                        m = re.search(r'[\d.]+', s)
+                        if m:
+                            vals.append(float(m.group()))
+                return np.array(vals)
+            # Initially parsed (may include columns we later drop)
+            wavelengths_all = _parse_wavelengths(wavelength_cols)
             
             # Find mass indices within tolerance
             mass_indices = np.where(np.abs(x_mass - target_mass) <= mass_tolerance)[0]
@@ -1077,11 +1083,17 @@ if "rempi_baseline_corrected" in st.session_state:
                 # Average signal over mass tolerance window
                 avg_mass = np.mean(x_mass[mass_indices])
                 
-                # Extract intensity at each wavelength for this mass range
-                intensities = []
-                for col in wavelength_cols:
-                    intensity = np.mean(corrected_df[col].values[mass_indices])
-                    intensities.append(intensity)
+                # Extract intensity at each wavelength for this mass range (vectorized for robustness)
+                # Ensure columns are present (they should be, as derived from corrected_df)
+                present_cols = [c for c in wavelength_cols if c in corrected_df.columns]
+                if len(present_cols) == 0:
+                    st.error("No matching wavelength columns found in the corrected data. Please re-run baseline correction.")
+                    st.caption(f"Expected columns like: {wavelength_cols[:3]}... | Available: {list(corrected_df.columns[:5])}...")
+                    st.stop()
+                Z = corrected_df[present_cols].to_numpy()  # shape: (n_mass_points, n_wavelengths)
+                intensities = Z[mass_indices, :].mean(axis=0).tolist()
+                # Recompute wavelengths aligned with present_cols
+                wavelengths = _parse_wavelengths(present_cols)
                 
                 # Create 1D plot
                 fig_1d = go.Figure()
@@ -1089,10 +1101,9 @@ if "rempi_baseline_corrected" in st.session_state:
                 fig_1d.add_trace(go.Scatter(
                     x=wavelengths,
                     y=intensities,
-                    mode='lines+markers',
+                    mode='lines',
                     name=f'Mass {target_mass:.1f} amu',
-                    line=dict(width=2, color='blue'),
-                    marker=dict(size=6)
+                    line=dict(width=2, color='blue')
                 ))
                 
                 fig_1d.update_layout(
@@ -1107,7 +1118,7 @@ if "rempi_baseline_corrected" in st.session_state:
                 # Add zero line
                 fig_1d.add_hline(y=0, line_width=1, line_dash="dash", line_color="gray")
                 
-                st.plotly_chart(fig_1d, use_container_width=True)
+                st.plotly_chart(fig_1d, width='stretch')
                 
                 # Show stats
                 st.info(f"**Statistics:** Peak intensity: {max(intensities):.4f} at {wavelengths[np.argmax(intensities)]:.2f} nm | Mean: {np.mean(intensities):.4f}")
@@ -1152,7 +1163,7 @@ if "rempi_baseline_corrected" in st.session_state:
     col_exp1, col_exp2 = st.columns(2)
     
     with col_exp1:
-        if st.button("💾 Export Full Baseline-Corrected Data", use_container_width=True):
+        if st.button("💾 Export Full Baseline-Corrected Data", width='stretch'):
             file_directory = st.session_state.get("rempi_file_directory", "")
             if file_directory:
                 output_path = Path(file_directory) / "output"
@@ -1164,7 +1175,7 @@ if "rempi_baseline_corrected" in st.session_state:
                 st.warning("No output directory set")
     
     with col_exp2:
-        if st.button("🔬 Export for Peak Detection (4.2)", use_container_width=True):
+        if st.button("🔬 Export for Peak Detection (4.2)", width='stretch'):
             x_mass = st.session_state.get("rempi_x_mass")
             if x_mass is None:
                 st.error("Mass axis not found. Please register parameters first.")

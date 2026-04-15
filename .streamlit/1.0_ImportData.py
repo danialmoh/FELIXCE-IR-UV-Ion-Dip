@@ -13,6 +13,45 @@ from scipy.interpolate import interp1d
 
 from packages.FELIX_HDF5_Reader_v2 import *
 
+# Helper function to extract calibration key from filename for auto-matching
+def extract_calibration_key(filename):
+    """
+    Extract a calibration matching key from a filename.
+    
+    Matches data files to calibration files based on the 'shift{N}' identifier
+    and the associated number (e.g., FELIX setting number).
+    
+    Data file examples:
+        'BRBnz_DisON_FELIX_ArF_Scan10_1125-1000_shift1_1910_step2.h5' -> 'shift1_1910'
+        'Molecule_FELIX_shift2_1450_step3.h5' -> 'shift2_1450'
+    
+    Calibration file examples:
+        '2026-03-18_FELIX_Shift1_WavenumberCalibration_1910.csv' -> 'shift1_1910'
+        'FELIX_Shift2_WavenumberCalibration_1450.csv' -> 'shift2_1450'
+    
+    Args:
+        filename (str): The filename to parse
+    
+    Returns:
+        str or None: Normalized calibration key like 'shift1_1910', or None if not found
+    """
+    name = filename.lower()
+    
+    # Pattern 1 (data files): shift{N}_{M} where M is a 3-5 digit number
+    # e.g., shift1_1910 in '..._shift1_1910_step2.h5'
+    match = re.search(r'shift(\d+)_(\d{3,5})', name)
+    if match:
+        return f"shift{match.group(1)}_{match.group(2)}"
+    
+    # Pattern 2 (calibration files): shift{N}...calibration_{M}
+    # e.g., Shift1_WavenumberCalibration_1910 in '..._Shift1_WavenumberCalibration_1910.csv'
+    shift_match = re.search(r'shift(\d+)', name)
+    cal_num_match = re.search(r'calibration_(\d{3,5})', name)
+    if shift_match and cal_num_match:
+        return f"shift{shift_match.group(1)}_{cal_num_match.group(1)}"
+    
+    return None
+
 # Helper function to extract step size from filename
 def extract_step_size_from_filename(filename):
     """
@@ -279,7 +318,7 @@ if st.session_state["calibration_tables"]:
             st.markdown(f"**{cal_name}**")
             st.dataframe(cal_df, use_container_width=True)
 
-# Per-file calibration assignment
+# Per-file calibration assignment with auto-matching
 if uploaded_files:
     st.markdown("#### Assign Calibration to Each File")
     
@@ -290,26 +329,61 @@ if uploaded_files:
     # Create list of calibration options
     cal_options = ["None (no calibration)"] + list(st.session_state["calibration_tables"].keys())
     
+    # Build calibration key → filename lookup from loaded calibration files
+    cal_key_lookup = {}
+    for cal_name in st.session_state["calibration_tables"].keys():
+        cal_key = extract_calibration_key(cal_name)
+        if cal_key:
+            cal_key_lookup[cal_key] = cal_name
+    
+    # Auto-match and display
+    auto_matched_count = 0
     for i, file in enumerate(uploaded_files):
-        col1, col2 = st.columns([3, 2])
+        # Try auto-matching by calibration key
+        data_key = extract_calibration_key(file.name)
+        auto_match = cal_key_lookup.get(data_key) if data_key else None
+        
+        # Priority: 1) explicit user selection in session state (not "None"), 2) auto-matched, 3) session state "None", 4) default None
+        existing_cal = st.session_state["file_calibrations"].get(file.name)
+        if existing_cal and existing_cal != "None (no calibration)" and existing_cal in cal_options:
+            current_cal = existing_cal
+        elif auto_match and auto_match in cal_options:
+            current_cal = auto_match
+            st.session_state["file_calibrations"][file.name] = current_cal
+            auto_matched_count += 1
+        else:
+            current_cal = "None (no calibration)"
+        
+        if current_cal not in cal_options:
+            current_cal = "None (no calibration)"
+        
+        # Set the selectbox key before rendering (only if not already set by user)
+        widget_key = f"cal_select_{i}_{file.name}"
+        if widget_key not in st.session_state:
+            st.session_state[widget_key] = current_cal
+        
+        col1, col2, col3 = st.columns([3, 2, 1])
         with col1:
             st.text(f"📁 {file.name}")
         with col2:
-            # Get current selection or default to None
-            current_cal = st.session_state["file_calibrations"].get(file.name, "None (no calibration)")
-            if current_cal not in cal_options:
-                current_cal = "None (no calibration)"
-            
-            default_idx = cal_options.index(current_cal)
-            
             selected_cal = st.selectbox(
                 "Calibration",
                 options=cal_options,
-                index=default_idx,
-                key=f"cal_select_{i}_{file.name}",
+                key=widget_key,
                 label_visibility="collapsed"
             )
             st.session_state["file_calibrations"][file.name] = selected_cal
+        with col3:
+            if selected_cal != "None (no calibration)":
+                if auto_match and selected_cal == auto_match:
+                    st.markdown("🔗 *auto*")
+                else:
+                    st.markdown("✅ *manual*")
+            elif data_key and not auto_match:
+                st.markdown("⚠️ *no match*")
+    
+    if auto_matched_count > 0 and cal_key_lookup:
+        st.success(f"🔗 Auto-matched {auto_matched_count} file(s) to calibration tables by shift identifier")
 else:
     st.warning("⚠️ Upload files first to assign calibrations.")
 

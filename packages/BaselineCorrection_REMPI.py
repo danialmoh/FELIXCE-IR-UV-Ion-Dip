@@ -223,7 +223,7 @@ class baseline_REMPI:
         --------
         pd.DataFrame : Baseline-corrected DataFrame with new 'Summed' column
         """
-        result_df = pd.DataFrame()
+        corrected_cols = {}
         
         for col in df.columns:
             if col == 'Summed':
@@ -233,10 +233,11 @@ class baseline_REMPI:
             self.baseline_range()
             self.baseline_mean()
             
-            corrected_signal = self.data - self.mean_value
-            result_df[f"bc_{col}"] = corrected_signal
+            corrected_cols[f"bc_{col}"] = self.data - self.mean_value
+        
+        result_df = pd.DataFrame(corrected_cols)
         
         # Add new summed column
-        result_df['Summed'] = result_df.sum(axis=1)
+        result_df['Summed'] = result_df.drop(columns=['Summed'], errors='ignore').sum(axis=1)
         
         return result_df
