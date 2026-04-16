@@ -4,11 +4,20 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import plotly.graph_objs as go
 from datetime import datetime
-import re
 import os
-from scipy.stats import pearsonr
-from scipy.interpolate import interp1d
+import io
+
 from packages.ReportManager import add_plot_to_report_button, init_report_session
+from packages.DFT_Parsers import parse_dft_file, broaden_spectrum_felix
+from packages.PCC_Scoring import (
+    DEFAULT_DIAGNOSTIC_REGIONS,
+    DEFAULT_PCC_THRESHOLDS,
+    compute_pcc,
+    score_label,
+    compute_batch_pcc,
+    rank_batch_results,
+    find_optimal_scaling_factor,
+)
 
 init_report_session()
 
@@ -16,107 +25,14 @@ st.title("🔬 DFT Spectrum Comparison & PCC Scoring")
 st.caption("Compare experimental IR-UV ion-dip spectra with DFT calculations using region-specific Pearson Correlation.")
 
 # ========================================================================================
-# PCC SCORING HELPER FUNCTIONS
+# THIN UI HELPERS (read from session state, delegate to package functions)
 # ========================================================================================
-
-# Default diagnostic regions for C11H8 isomer analysis
-DEFAULT_DIAGNOSTIC_REGIONS = {
-    "Full Overlap":        None,           # entire shared range
-    "Fingerprint":         (600,  1500),   # ring deformations, CH bends
-    "Mid-IR":              (1500, 2000),   # skeletal stretches
-    "C≡C Stretch":         (2050, 2200),   # ethynyl diagnostic
-    "Aromatic C-H OOP":    (700,  900),    # out-of-plane CH, isomer-sensitive
-}
 
 def get_diagnostic_regions():
     """Get diagnostic regions from session state or use defaults"""
     if 'custom_regions_enabled' in st.session_state and st.session_state['custom_regions_enabled']:
         return st.session_state.get('diagnostic_regions', DEFAULT_DIAGNOSTIC_REGIONS)
     return DEFAULT_DIAGNOSTIC_REGIONS
-
-def normalize_spectrum(y):
-    """
-    Min-max normalize a spectrum to [0, 1].
-    Removes intensity scale bias before PCC calculation.
-    """
-    y_min, y_max = np.min(y), np.max(y)
-    if y_max - y_min < 1e-10:
-        return np.zeros_like(y)
-    return (y - y_min) / (y_max - y_min)
-
-def interpolate_to_common_grid(x1, y1, x2, y2, n_points=2000):
-    """
-    Interpolate both spectra onto a shared wavenumber grid
-    covering only the overlapping region.
-    
-    Returns:
-    --------
-    grid, y1_interp, y2_interp : arrays or (None, None, None) if no overlap
-    """
-    x_min = max(np.min(x1), np.min(x2))
-    x_max = min(np.max(x1), np.max(x2))
-    
-    if x_min >= x_max:
-        return None, None, None  # No overlap
-    
-    grid = np.linspace(x_min, x_max, n_points)
-    
-    interp1 = interp1d(x1, y1, kind='linear', bounds_error=False, fill_value=0.0)
-    interp2 = interp1d(x2, y2, kind='linear', bounds_error=False, fill_value=0.0)
-    
-    return grid, interp1(grid), interp2(grid)
-
-def compute_pcc(exp_x, exp_y, theory_x, theory_y, region=None):
-    """
-    Compute Pearson Correlation Coefficient between experimental
-    and theoretical spectra over a given wavenumber region.
-    
-    Parameters:
-    -----------
-    exp_x, exp_y : arrays
-        Experimental wavenumber and intensity
-    theory_x, theory_y : arrays
-        Theoretical wavenumber and intensity
-    region : tuple (min, max) in cm⁻¹, or None for full overlap
-    
-    Returns:
-    --------
-    r : float, PCC score (-1 to 1)
-    p : float, p-value for statistical significance
-    grid : array, common wavenumber grid used
-    exp_norm : array, normalized experimental spectrum on grid
-    theory_norm : array, normalized theory spectrum on grid
-    """
-    grid, exp_interp, theory_interp = interpolate_to_common_grid(
-        exp_x, exp_y, theory_x, theory_y
-    )
-    
-    if grid is None:
-        return None, None, None, None, None
-    
-    # Apply region mask if specified
-    if region is not None:
-        mask = (grid >= region[0]) & (grid <= region[1])
-        if mask.sum() < 10:  # not enough points
-            return None, None, None, None, None
-        grid = grid[mask]
-        exp_interp = exp_interp[mask]
-        theory_interp = theory_interp[mask]
-    
-    # Normalize both to [0, 1] - removes intensity scale differences
-    exp_norm = normalize_spectrum(exp_interp)
-    theory_norm = normalize_spectrum(theory_interp)
-    
-    # Compute Pearson correlation
-    r, p = pearsonr(exp_norm, theory_norm)
-    return r, p, grid, exp_norm, theory_norm
-
-# Default PCC thresholds (adjusted for IR-UV action spectra)
-DEFAULT_PCC_THRESHOLDS = {
-    "excellent": 0.60,
-    "good": 0.40,
-    "weak": 0.20,
-}
 
 def get_pcc_thresholds():
     """Get PCC thresholds from session state or use defaults"""
@@ -126,366 +42,9 @@ def get_pcc_thresholds():
         "weak": st.session_state.get("pcc_threshold_weak", DEFAULT_PCC_THRESHOLDS["weak"]),
     }
 
-def score_label(r):
-    """
-    Human-readable label based on adjustable thresholds for IR-UV action spectra.
-    Reads thresholds from session state so users can customize them.
-    """
-    if r is None:
-        return "N/A", "gray"
-    thresholds = get_pcc_thresholds()
-    if r >= thresholds["excellent"]:
-        return "Excellent ✅", "green"
-    elif r >= thresholds["good"]:
-        return "Good 🟡", "orange"
-    elif r >= thresholds["weak"]:
-        return "Weak ⚠️", "orange"
-    else:
-        return "Poor / Rule Out ❌", "red"
-
-# ========================================================================================
-# SPECTRUM PROCESSING HELPER FUNCTIONS
-# ========================================================================================
-
-def broaden_spectrum_felix(frequencies, intensities, x_range=(200, 4000), bw_frac=0.007, npoints=4000):
-    """
-    Convolve stick spectrum with a Gaussian lineshape whose FWHM scales
-    linearly with frequency: FWHM(nu) = bw_frac * nu.
-    
-    This frequency-proportional resolution is characteristic of FELIX FEL instruments
-    and is more physically accurate than constant FWHM broadening.
-    
-    Parameters:
-    -----------
-    frequencies : array-like
-        Peak frequencies in cm⁻¹
-    intensities : array-like
-        Peak intensities in km/mol
-    x_range : tuple
-        (min, max) wavenumber range for output spectrum
-    bw_frac : float
-        Fractional bandwidth (default 0.007 = 0.7%)
-    npoints : int
-        Number of points in output spectrum
-        
-    Returns:
-    --------
-    x, y : arrays
-        Broadened spectrum (wavenumbers, intensities)
-    """
-    x = np.linspace(x_range[0], x_range[1], npoints)
-    y = np.zeros_like(x)
-    
-    for freq, inten in zip(frequencies, intensities):
-        if freq <= 0:
-            continue
-        # FWHM scales linearly with frequency
-        fwhm_local = bw_frac * freq
-        # Convert FWHM to Gaussian sigma
-        sigma = fwhm_local / (2.0 * np.sqrt(2.0 * np.log(2.0)))
-        # Add Gaussian peak
-        y += inten * np.exp(-0.5 * ((x - freq) / sigma) ** 2)
-    
-    return x, y
-
-def parse_custom_report(content):
-    """Parse custom DFT report format"""
-    frequencies = []
-    intensities = []
-    metadata = {}
-    
-    lines = content.split('\n')
-    in_spectrum_section = False
-    
-    for i, line in enumerate(lines):
-        # Extract metadata
-        if 'Software:' in line:
-            metadata['software'] = line.split('Software:')[1].strip()
-        elif 'Method:' in line:
-            metadata['method'] = line.split('Method:')[1].strip()
-        elif 'Final Energy:' in line:
-            metadata['energy'] = line.split('Final Energy:')[1].strip().split()[0]
-        elif 'Strongest Peak:' in line:
-            metadata['strongest_peak'] = line.split('Strongest Peak:')[1].strip()
-        
-        # Find spectrum data section
-        if 'Mode     Frequency (cm⁻¹)     Intensity (km/mol)' in line:
-            in_spectrum_section = True
-            continue
-        
-        if in_spectrum_section:
-            # Stop at section delimiter or empty lines after data
-            if '=====' in line or '----' in line or (line.strip() == '' and frequencies):
-                break
-            
-            # Parse data lines
-            parts = line.split()
-            if len(parts) >= 3:
-                try:
-                    mode_num = int(parts[0])
-                    freq = float(parts[1])
-                    inten = float(parts[2])
-                    frequencies.append(freq)
-                    intensities.append(inten)
-                except ValueError:
-                    continue
-    
-    return np.array(frequencies), np.array(intensities), metadata
-
-def parse_orca_out(content):
-    """Parse ORCA .out file for IR frequencies and intensities"""
-    frequencies = []
-    intensities = []
-    
-    lines = content.split('\n')
-    in_ir_section = False
-    
-    for i, line in enumerate(lines):
-        # Look for IR spectrum section
-        if 'IR SPECTRUM' in line:
-            in_ir_section = True
-            # Skip header lines
-            continue
-        
-        if in_ir_section:
-            # Skip separator and header lines
-            if '---' in line or 'Mode' in line or 'cm**-1' in line:
-                continue
-            
-            # Stop at empty line after data
-            if line.strip() == '':
-                if frequencies:
-                    break
-                continue
-            
-            # Parse ORCA IR spectrum format: "mode: freq eps Int T**2 ..."
-            # Example: "  6:     96.33   0.000147    0.74  0.000477  (-0.000000  0.000000  0.021838)"
-            parts = line.split()
-            if len(parts) >= 4 and ':' in parts[0]:
-                try:
-                    freq = float(parts[1])  # frequency in cm⁻¹
-                    inten = float(parts[3])  # intensity in km/mol
-                    frequencies.append(freq)
-                    intensities.append(inten)
-                except (ValueError, IndexError):
-                    continue
-    
-    return np.array(frequencies), np.array(intensities), {}
-
-def parse_gaussian_out(content):
-    """Parse Gaussian .out/.log file for IR frequencies and intensities"""
-    frequencies = []
-    intensities = []
-    
-    lines = content.split('\n')
-    
-    # Try standard Gaussian format first
-    for i, line in enumerate(lines):
-        # Look for frequency section
-        if 'Frequencies --' in line:
-            freqs = [float(x) for x in line.split()[2:]]
-            
-            # Look for IR intensities a few lines down
-            for j in range(i+1, min(i+10, len(lines))):
-                if 'IR Inten' in lines[j]:
-                    intens = [float(x) for x in lines[j].split()[3:]]
-                    frequencies.extend(freqs)
-                    intensities.extend(intens)
-                    break
-    
-    return np.array(frequencies), np.array(intensities), {}
-
-def parse_gaussian_anharmonic(content):
-    """
-    Parse Gaussian anharmonic frequency output files.
-    
-    Reads all three sections produced by Gaussian anharmonic calculations:
-      - Fundamental Bands:   Mode(n)        E(harm) E(anharm) I(harm) I(anharm)
-      - Overtones:           Mode(n)        E(harm) E(anharm) I(harm) I(anharm)
-      - Combination Bands:   Mode(n) Mode(m) E(harm) E(anharm) I(harm) I(anharm)
-    
-    Returns all bands merged into a single stick spectrum.
-    """
-    fundamentals = []
-    overtones = []
-    combinations = []
-    
-    lines = content.split('\n')
-    current_section = None  # 'fundamental', 'overtone', 'combination'
-    in_data = False
-    
-    for line in lines:
-        stripped = line.strip()
-        
-        # Detect section headers
-        if 'Fundamental Bands' in line:
-            current_section = 'fundamental'
-            in_data = False
-            continue
-        elif 'Overtones' in line and 'Combination' not in line:
-            current_section = 'overtone'
-            in_data = False
-            continue
-        elif 'Combination Bands' in line:
-            current_section = 'combination'
-            in_data = False
-            continue
-        
-        if current_section is None:
-            continue
-        
-        # Skip header/separator lines, then start reading data
-        if 'Mode(n)' in line or 'Mode' in line:
-            in_data = True
-            continue
-        if stripped.startswith('---') or stripped.startswith('==='):
-            in_data = True
-            continue
-        
-        # Empty line → end of current section data
-        if stripped == '':
-            if in_data:
-                in_data = False
-                current_section = None
-            continue
-        
-        if not in_data:
-            continue
-        
-        parts = line.split()
-        
-        # Need at least a mode identifier to be a data line
-        if not parts or '(' not in parts[0]:
-            continue
-        
-        try:
-            # Extract numeric values, skipping mode identifiers (contain '(')
-            # and text fields like Irrep labels
-            nums = []
-            for p in parts:
-                if '(' in p:
-                    continue
-                try:
-                    nums.append(float(p))
-                except ValueError:
-                    continue
-            
-            # nums should be [E_harm, E_anharm, I_harm, I_anharm] (4 values)
-            # or             [E_harm, E_anharm, I_anharm]          (3 values)
-            if len(nums) >= 4:
-                freq = nums[1]    # E(anharm)
-                inten = nums[3]   # I(anharm)
-            elif len(nums) >= 3:
-                freq = nums[1]    # E(anharm)
-                inten = nums[2]   # I(anharm) when no I(harm) column
-            elif len(nums) >= 2:
-                freq = nums[0]
-                inten = nums[1]
-            else:
-                continue
-            
-            if current_section == 'fundamental':
-                fundamentals.append((freq, inten))
-            elif current_section == 'overtone':
-                overtones.append((freq, inten))
-            elif current_section == 'combination':
-                combinations.append((freq, inten))
-        except (ValueError, IndexError):
-            continue
-    
-    # Merge all bands into single arrays
-    all_bands = fundamentals + overtones + combinations
-    if not all_bands:
-        return np.array([]), np.array([]), {'type': 'anharmonic'}
-    
-    frequencies = np.array([b[0] for b in all_bands])
-    intensities = np.array([b[1] for b in all_bands])
-    
-    # Build per-band type labels for colour-coded plotting
-    band_types = (
-        ['fundamental'] * len(fundamentals)
-        + ['overtone'] * len(overtones)
-        + ['combination'] * len(combinations)
-    )
-    
-    metadata = {
-        'type': 'anharmonic',
-        'n_fundamentals': len(fundamentals),
-        'n_overtones': len(overtones),
-        'n_combinations': len(combinations),
-        'band_types': band_types,
-    }
-    
-    return frequencies, intensities, metadata
-
-def parse_orca_stick(content):
-    """Parse ORCA .out.ir.stk stick spectrum file"""
-    frequencies = []
-    intensities = []
-    
-    lines = content.split('\n')
-    for line in lines:
-        parts = line.split()
-        if len(parts) >= 2:
-            try:
-                freq = float(parts[0])
-                inten = float(parts[1])
-                frequencies.append(freq)
-                intensities.append(inten)
-            except ValueError:
-                continue
-    
-    return np.array(frequencies), np.array(intensities), {'type': 'stick_spectrum'}
-
-def parse_orca_broadened(content):
-    """Parse ORCA .out.ir.dat broadened spectrum file (already processed)"""
-    frequencies = []
-    intensities = []
-    
-    lines = content.split('\n')
-    for line in lines:
-        parts = line.split()
-        if len(parts) >= 2:
-            try:
-                freq = float(parts[0])
-                inten = float(parts[1])
-                frequencies.append(freq)
-                intensities.append(inten)
-            except ValueError:
-                continue
-    
-    return np.array(frequencies), np.array(intensities), {'type': 'broadened_spectrum'}
-
-def parse_dft_file(uploaded_file):
-    """
-    Auto-detect and parse DFT output file
-    
-    Returns:
-    --------
-    frequencies, intensities, metadata
-    """
-    content = uploaded_file.read().decode('utf-8', errors='ignore')
-    filename = uploaded_file.name.lower()
-    
-    # Check for specific file extensions first
-    if filename.endswith('.ir.stk'):
-        return parse_orca_stick(content)
-    elif filename.endswith('.ir.dat'):
-        return parse_orca_broadened(content)
-    elif 'anhar' in filename and ('.txt' in filename or '.log' in filename):
-        return parse_gaussian_anharmonic(content)
-    # Try different parsers based on content
-    elif 'ANALYSIS REPORT' in content[:2000]:
-        return parse_custom_report(content)
-    elif 'O   R   C   A' in content[:1000]:
-        return parse_orca_out(content)
-    elif 'Fundamental Bands' in content or 'Overtones' in content or 'Combination Bands' in content:
-        return parse_gaussian_anharmonic(content)
-    elif 'Gaussian' in content[:1000] or 'Frequencies --' in content:
-        return parse_gaussian_out(content)
-    else:
-        st.warning("Could not auto-detect file format. Trying custom parser...")
-        return parse_custom_report(content)
+def ui_score_label(r):
+    """score_label wrapper that reads thresholds from session state"""
+    return score_label(r, thresholds=get_pcc_thresholds())
 
 # Main UI
 st.markdown("---")
@@ -508,7 +67,8 @@ if uploaded_files:
         
         with st.spinner(f"Parsing {len(uploaded_files)} file(s)..."):
             for uploaded_file in uploaded_files:
-                frequencies, intensities, metadata = parse_dft_file(uploaded_file)
+                content = uploaded_file.read().decode('utf-8', errors='ignore')
+                frequencies, intensities, metadata = parse_dft_file(content, uploaded_file.name)
                 
                 if len(frequencies) == 0:
                     st.warning(f"⚠️ No IR spectrum data found in {uploaded_file.name}")
@@ -543,7 +103,7 @@ if uploaded_files:
                     nc = struct['metadata'].get('n_combinations', 0)
                     row['Breakdown'] = f"{nf} fund + {no} over + {nc} comb"
                 summary_data.append(row)
-            st.dataframe(pd.DataFrame(summary_data), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(summary_data), width='stretch', hide_index=True)
             
             # Select active structure for detailed view
             if len(structures) > 1:
@@ -663,7 +223,7 @@ if 'dft_frequencies' in st.session_state:
             xaxis_title="Wavenumber (cm⁻¹)", yaxis_title="Intensity (km/mol)",
             title="DFT IR Spectrum", hovermode='closest', legend=dict(x=0.7, y=0.95)
         )
-        st.plotly_chart(fig_dft, use_container_width=True)
+        st.plotly_chart(fig_dft, width='stretch')
     
     with tab_mpl_dft:
         fig_static, ax = plt.subplots(figsize=(12, 5))
@@ -692,6 +252,76 @@ if 'dft_frequencies' in st.session_state:
         
         This is characteristic of FEL instruments and provides more physically accurate comparison than constant FWHM broadening.
         """)
+
+# ========================================================================================
+# OPTIMAL SCALING FACTOR SEARCH
+# (Von der Esch et al., J. Chem. Theory Comput. 2021, 17, 985–995)
+# ========================================================================================
+fullrange_depletion_data_for_opt = st.session_state.get("fullrange_depletion_data", None)
+if 'dft_frequencies' in st.session_state and fullrange_depletion_data_for_opt is not None:
+    with st.expander("🔎 Optimal Scaling Factor Search (Von der Esch et al., JCTC 2021)", expanded=False):
+        st.caption(
+            "Sweep scaling factors and pick the one that maximises mean PCC. "
+            "Based on: Von der Esch, B. et al., *J. Chem. Theory Comput.* **2021**, 17, 985–995. "
+            "[DOI: 10.1021/acs.jctc.0c01279](https://doi.org/10.1021/acs.jctc.0c01279)"
+        )
+        opt_col1, opt_col2, opt_col3 = st.columns(3)
+        with opt_col1:
+            opt_fmin = st.number_input("Factor min", value=0.82, step=0.01, format="%.2f", key="_opt_fmin")
+        with opt_col2:
+            opt_fmax = st.number_input("Factor max", value=1.05, step=0.01, format="%.2f", key="_opt_fmax")
+        with opt_col3:
+            opt_nsteps = st.number_input("Steps", value=230, min_value=20, max_value=500, step=10, key="_opt_nsteps")
+
+        if st.button("🔍 Find Optimal Scaling Factor", type="primary", key="_run_opt_scale"):
+            exp_x_opt = fullrange_depletion_data_for_opt.iloc[:, 0].values
+            exp_y_opt = fullrange_depletion_data_for_opt.iloc[:, 4].values
+            bw_opt = st.session_state.get('bw_frac', 0.007)
+            xmin_opt = st.session_state.get('x_min', 500.0)
+            xmax_opt = st.session_state.get('x_max', 2200.0)
+            shift_opt = st.session_state.get('shift_theory', 0.0)
+            regions_opt = get_diagnostic_regions()
+
+            with st.spinner("Sweeping scaling factors…"):
+                opt_result = find_optimal_scaling_factor(
+                    exp_x_opt, exp_y_opt,
+                    st.session_state['dft_frequencies'],
+                    st.session_state['dft_intensities'],
+                    factor_range=(opt_fmin, opt_fmax),
+                    n_steps=opt_nsteps,
+                    broaden_func=broaden_spectrum_felix,
+                    bw_frac=bw_opt, x_range=(xmin_opt, xmax_opt),
+                    regions=regions_opt, shift=shift_opt,
+                )
+            st.session_state['_opt_scale_result'] = opt_result
+
+        # Display persisted results
+        if '_opt_scale_result' in st.session_state:
+            opt_result = st.session_state['_opt_scale_result']
+            best = opt_result['best_factor']
+            best_pcc = opt_result['best_mean_pcc']
+
+            st.success(f"**Best scaling factor: {best:.4f}**  |  Mean PCC = {best_pcc:.4f}")
+
+            # Plot the sweep curve
+            fig_opt, ax_opt = plt.subplots(figsize=(10, 4))
+            ax_opt.plot(opt_result['factors'], opt_result['mean_pcc'],
+                        'k-', linewidth=2, label='Mean PCC')
+            for rname, rvals in opt_result.get('per_region_pcc', {}).items():
+                ax_opt.plot(opt_result['factors'], rvals, '--', alpha=0.5, label=rname)
+            ax_opt.axvline(best, color='red', linestyle=':', linewidth=1.5, label=f'Optimum = {best:.4f}')
+            ax_opt.set_xlabel("Scaling Factor", fontsize=12)
+            ax_opt.set_ylabel("PCC (r)", fontsize=12)
+            ax_opt.set_title("Scaling Factor Optimisation (Von der Esch et al., JCTC 2021)", fontsize=13, fontweight='bold')
+            ax_opt.legend(fontsize=8, loc='lower left')
+            ax_opt.grid(True, alpha=0.3)
+            st.pyplot(fig_opt)
+            plt.close(fig_opt)
+
+            st.caption(
+                "Reference scaling factors from Von der Esch et al.: "
+                "B3LYP = 0.966, PBE = 0.985, PBEh-3c = 0.938, HF-3c = 0.832, GFN2-xTB = 0.999"
+            )
 
 # ========================================================================================
 # PCC CONFIGURATION: Diagnostic Regions & Thresholds (only when DFT loaded)
@@ -746,14 +376,14 @@ if 'dft_frequencies' in st.session_state:
                     {"Region": name, "Range": f"{rng[0]:.0f}-{rng[1]:.0f} cm⁻¹" if rng else "Full overlap"}
                     for name, rng in custom_regions.items()
                 ])
-                st.dataframe(preview_df, use_container_width=True, hide_index=True)
+                st.dataframe(preview_df, width='stretch', hide_index=True)
             else:
                 st.markdown("**Using default C₁₁H₈ isomer regions:**")
                 default_df = pd.DataFrame([
                     {"Region": name, "Range": f"{rng[0]:.0f}-{rng[1]:.0f} cm⁻¹" if rng else "Full overlap"}
                     for name, rng in DEFAULT_DIAGNOSTIC_REGIONS.items()
                 ])
-                st.dataframe(default_df, use_container_width=True, hide_index=True)
+                st.dataframe(default_df, width='stretch', hide_index=True)
         
         with cfg_tab_thresholds:
             st.caption("Set the PCC score boundaries for each verdict category. Values are Pearson r (-1 to 1).")
@@ -790,11 +420,114 @@ if 'dft_frequencies' in st.session_state:
             *Thresholds lower than absorption IR (Von der Esch 0.75/0.50) due to IR-UV ion dip spectroscopy.*
             
             **Tips:** Use regional scores for isomer discrimination. Compare multiple structures — highest PCC wins. Visual inspection remains critical.
+            
+            ---
+            **Reference:** Von der Esch, B.; Peters, L. D. M.; Sauerland, L.; Ochsenfeld, C.
+            *J. Chem. Theory Comput.* **2021**, 17, 985–995.
+            [DOI: 10.1021/acs.jctc.0c01279](https://doi.org/10.1021/acs.jctc.0c01279)
             """)
 
 # Experimental vs Theoretical Comparison
 st.markdown("---")
 st.markdown("## Step 3 — Compare with Experimental Data")
+
+# ---- Upload experimental data directly (bypass pipeline) ----
+_pipeline_data = st.session_state.get("fullrange_depletion_data", None)
+_upload_source = "pipeline" if _pipeline_data is not None else None
+
+with st.expander(
+    "📂 Upload experimental spectrum (skip pipeline)"
+    if _pipeline_data is not None
+    else "📂 Upload experimental spectrum",
+    expanded=(_pipeline_data is None),
+):
+    st.caption(
+        "Upload a CSV or TXT file from a previous analysis. "
+        "Expected format: columns separated by comma, tab, or whitespace. "
+        "The file should contain at least a **wavenumber** column and an **intensity** column "
+        "(e.g. ``-ln(depletion)``)."
+    )
+    exp_upload = st.file_uploader(
+        "Experimental spectrum file",
+        type=["csv", "txt"],
+        key="_exp_upload",
+        help="Accepts the CSV exported by Section 3.0 or any 2-column (wavenumber, intensity) file.",
+    )
+    if exp_upload is not None:
+        try:
+            raw = exp_upload.read().decode("utf-8", errors="ignore")
+            # Auto-detect separator
+            if "\t" in raw[:500]:
+                _sep = "\t"
+            elif "," in raw[:500]:
+                _sep = ","
+            else:
+                _sep = r"\s+"
+            uploaded_exp_df = pd.read_csv(
+                io.StringIO(raw), sep=_sep, engine="python"
+            )
+
+            st.markdown(f"**Loaded {len(uploaded_exp_df)} rows × {len(uploaded_exp_df.columns)} columns**")
+
+            col_names = list(uploaded_exp_df.columns)
+
+            # Auto-pick sensible defaults
+            _default_x = 0
+            _default_y = min(4, len(col_names) - 1)
+            for ci, c in enumerate(col_names):
+                cl = str(c).lower()
+                if "wavenum" in cl or cl == "x":
+                    _default_x = ci
+                if "ln" in cl and "depletion" in cl:
+                    _default_y = ci
+                elif "intensity" in cl or cl == "y":
+                    _default_y = ci
+
+            ucol1, ucol2 = st.columns(2)
+            with ucol1:
+                x_col = st.selectbox(
+                    "Wavenumber column",
+                    options=range(len(col_names)),
+                    format_func=lambda i: f"{i}: {col_names[i]}",
+                    index=_default_x,
+                    key="_exp_xcol",
+                )
+            with ucol2:
+                y_col = st.selectbox(
+                    "Intensity column (e.g. -ln(depletion))",
+                    options=range(len(col_names)),
+                    format_func=lambda i: f"{i}: {col_names[i]}",
+                    index=_default_y,
+                    key="_exp_ycol",
+                )
+
+            if st.button("✅ Use this spectrum", key="_use_uploaded_exp"):
+                # Build a 5-column DataFrame matching the pipeline format so all
+                # downstream code (iloc[:,0] and iloc[:,4]) works unchanged.
+                x_vals = pd.to_numeric(uploaded_exp_df.iloc[:, x_col], errors="coerce")
+                y_vals = pd.to_numeric(uploaded_exp_df.iloc[:, y_col], errors="coerce")
+                mask = x_vals.notna() & y_vals.notna()
+                x_vals = x_vals[mask].values
+                y_vals = y_vals[mask].values
+
+                compat_df = pd.DataFrame({
+                    "wavenumber": x_vals,
+                    "integrated_signal_withoutIR": np.zeros_like(x_vals),
+                    "integrated_signal_withIR": np.zeros_like(x_vals),
+                    "depletion": np.zeros_like(x_vals),
+                    "-ln(depletion)": y_vals,
+                })
+                st.session_state["fullrange_depletion_data"] = compat_df
+                _upload_source = "upload"
+                st.success(
+                    f"✅ Loaded {len(compat_df)} points "
+                    f"({x_vals.min():.1f} – {x_vals.max():.1f} cm⁻¹). "
+                    "You can now run the comparison below."
+                )
+                st.rerun()
+
+        except Exception as exc:
+            st.error(f"Failed to read file: {exc}")
 
 # Check if experimental data is available
 fullrange_depletion_data = st.session_state.get("fullrange_depletion_data", None)
@@ -808,7 +541,7 @@ if fullrange_depletion_data is not None and 'dft_x_broad' in st.session_state:
         invert_theory = st.checkbox("Invert Theory", value=False, key="invert_theory",
                                    help="Invert theoretical spectrum if needed")
     with col3:
-        run_comparison = st.button("📊 Compare", type="primary", use_container_width=True)
+        run_comparison = st.button("📊 Compare", type="primary", width='stretch')
     
     # Compute comparison when button pressed, store results in session state
     if run_comparison:
@@ -826,7 +559,7 @@ if fullrange_depletion_data is not None and 'dft_x_broad' in st.session_state:
             r, p, grid, exp_norm, theory_norm = compute_pcc(
                 exp_x, exp_y, theory_x_shifted, theory_y, region=region_range
             )
-            label, color = score_label(r)
+            label, color = ui_score_label(r)
             pcc_results.append({
                 "Region": region_name,
                 "Range (cm⁻¹)": f"{region_range[0]}–{region_range[1]}" if region_range else "Full",
@@ -870,7 +603,7 @@ if fullrange_depletion_data is not None and 'dft_x_broad' in st.session_state:
                 yaxis2=dict(title="Intensity (km/mol)", side='right', overlaying='y', showgrid=False),
                 title="Experimental vs DFT Comparison", hovermode='x unified', legend=dict(x=0.02, y=0.98)
             )
-            st.plotly_chart(fig_comp, use_container_width=True)
+            st.plotly_chart(fig_comp, width='stretch')
         
         with tab_comp_mpl:
             fig_comp_static, ax1 = plt.subplots(figsize=(14, 6))
@@ -904,7 +637,7 @@ if fullrange_depletion_data is not None and 'dft_x_broad' in st.session_state:
             else:
                 return ['', '', '', '', "background-color: #f8d7da; color: #721c24"]
         
-        st.dataframe(df_pcc.style.apply(highlight_verdict, axis=1), use_container_width=True, hide_index=True)
+        st.dataframe(df_pcc.style.apply(highlight_verdict, axis=1), width='stretch', hide_index=True)
         
         # Bar chart
         fig_pcc, ax_pcc = plt.subplots(figsize=(10, 4))
@@ -962,7 +695,7 @@ if fullrange_depletion_data is not None and 'dft_x_broad' in st.session_state:
             st.success(f"✅ Saved: `{exp_filename}`, `{theory_filename}`, `{pcc_filename}`")
 
 elif fullrange_depletion_data is None:
-    st.info("⚠️ No experimental data found in session. Please run the depletion calculation (Section 3.0) first.")
+    st.info("⚠️ No experimental data found in session. Run the depletion calculation (Section 3.0) or **upload a spectrum file** above.")
 elif 'dft_x_broad' not in st.session_state:
     st.info("⚠️ Please upload and process a DFT file first.")
 
@@ -987,41 +720,16 @@ if fullrange_depletion_data is not None and len(st.session_state.get('dft_struct
         shift = st.session_state.get('shift_theory', 0.0)
         DIAGNOSTIC_REGIONS = get_diagnostic_regions()
         
-        all_results = []
         progress_bar = st.progress(0)
-        for idx, struct in enumerate(structures):
-            scaled_freq = struct['frequencies'] * freq_scale
-            theory_x, theory_y = broaden_spectrum_felix(
-                scaled_freq, struct['intensities'], x_range=(x_min, x_max), bw_frac=bw_frac, npoints=4000
-            )
-            theory_x_shifted = theory_x + shift
-            struct_pcc = {'filename': struct['filename']}
-            for region_name, region_range in DIAGNOSTIC_REGIONS.items():
-                r, p, _, _, _ = compute_pcc(exp_x, exp_y, theory_x_shifted, theory_y, region=region_range)
-                struct_pcc[region_name] = r if r is not None else np.nan
-            all_results.append(struct_pcc)
-            progress_bar.progress((idx + 1) / len(structures))
+        all_results = compute_batch_pcc(
+            structures, exp_x, exp_y, DIAGNOSTIC_REGIONS,
+            freq_scale=freq_scale, bw_frac=bw_frac,
+            x_range=(x_min, x_max), shift=shift,
+            broaden_func=broaden_spectrum_felix,
+        )
+        progress_bar.progress(1.0)
         
-        df_batch = pd.DataFrame(all_results)
-        
-        # Average PCC excluding Full Overlap and subset regions
-        all_region_names = [r for r in DIAGNOSTIC_REGIONS.keys() if r != "Full Overlap"]
-        region_ranges = {r: DIAGNOSTIC_REGIONS[r] for r in all_region_names if DIAGNOSTIC_REGIONS[r] is not None}
-        scoring_regions = []
-        for name, rng in region_ranges.items():
-            is_subset = any(
-                other_name != name and other_rng[0] <= rng[0] and other_rng[1] >= rng[1]
-                for other_name, other_rng in region_ranges.items()
-            )
-            if not is_subset:
-                scoring_regions.append(name)
-        if not scoring_regions:
-            scoring_regions = all_region_names
-        
-        df_batch['Average PCC'] = df_batch[scoring_regions].mean(axis=1, skipna=True)
-        df_batch['Valid Regions'] = df_batch[scoring_regions].notna().sum(axis=1)
-        df_batch['Rank'] = df_batch['Average PCC'].rank(ascending=False, method='min').astype(int)
-        df_batch = df_batch.sort_values('Rank')
+        df_batch, scoring_regions = rank_batch_results(all_results, DIAGNOSTIC_REGIONS)
         
         # Persist in session state
         st.session_state['_batch_df'] = df_batch
@@ -1049,7 +757,7 @@ if fullrange_depletion_data is not None and len(st.session_state.get('dft_struct
         
         st.dataframe(
             df_batch.style.background_gradient(subset=['Average PCC'], cmap='RdYlGn', vmin=-1, vmax=1),
-            use_container_width=True, hide_index=True
+            width='stretch', hide_index=True
         )
         
         # Batch visualizations in tabs
