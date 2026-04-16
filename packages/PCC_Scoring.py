@@ -1,35 +1,49 @@
 '''
-Pearson Correlation Coefficient (PCC) scoring for DFT vs experimental IR spectra.
+Spectral similarity scoring for DFT vs experimental IR spectra.
 
-Provides region-based PCC analysis for structure assignment:
+Provides region-based analysis for structure assignment:
+  - PCC  — Pearson Correlation Coefficient (Von der Esch et al.)
+  - SEC  — Squared Euclidean Cosine (intensity-pattern similarity)
+  - SFEC — Squared First-Difference Euclidean Cosine (Samuel et al.)
+           Robust to baseline distortion & noise in action spectra.
+  - Preprocessing: smoothing, baseline clipping, derivative transform
   - Interpolation of spectra onto a common grid
   - Min-max normalization (intensity-independent comparison)
-  - Per-region and batch PCC computation
+  - Per-region and batch computation (any metric)
   - Score labelling with adjustable thresholds
   - Automatic optimal scaling factor search
   - Dual scaling factor support (high / low frequency domains)
 
 No Streamlit dependency — all functions accept explicit parameters.
 
-Reference
----------
+References
+----------
 Von der Esch, B.; Peters, L. D. M.; Sauerland, L.; Ochsenfeld, C.
-"Quantitative Comparison of Experimental and Computed IR-Spectra
-Extracted from Ab Initio Molecular Dynamics."
-J. Chem. Theory Comput. 2021, 17, 985–995.
-https://doi.org/10.1021/acs.jctc.0c01279
+  J. Chem. Theory Comput. 2021, 17, 985–995.
+  https://doi.org/10.1021/acs.jctc.0c01279
+
+Samuel, A. Z. et al.
+  ACS Omega 2021, 6, 2060–2065.
+  https://doi.org/10.1021/acsomega.0c05041
 '''
 
 import numpy as np
 from scipy.stats import pearsonr
 from scipy.interpolate import interp1d
+from scipy.spatial.distance import cosine as _cosine_distance
+from scipy.signal import savgol_filter
 
 __all__ = [
     'DEFAULT_DIAGNOSTIC_REGIONS',
     'DEFAULT_PCC_THRESHOLDS',
+    'AVAILABLE_METRICS',
     'normalize_spectrum',
     'interpolate_to_common_grid',
+    'preprocess_spectrum',
     'compute_pcc',
+    'compute_sec',
+    'compute_sfec',
+    'compute_similarity',
     'score_label',
     'compute_batch_pcc',
     'rank_batch_results',
@@ -143,6 +157,169 @@ def compute_pcc(exp_x, exp_y, theory_x, theory_y, region=None):
     return r, p, grid, exp_norm, theory_norm
 
 
+def compute_sec(exp_x, exp_y, theory_x, theory_y, region=None):
+    """
+    Squared Euclidean Cosine (SEC) similarity.
+
+    SEC = cos²(θ) where θ is the angle between the two spectra treated
+    as vectors.  Uses scipy.spatial.distance.cosine internally.
+
+    Returns 0–1 (1 = identical shape).  Unlike PCC, SEC is always ≥ 0
+    and is insensitive to additive offsets only when spectra are
+    non-negative.
+
+    Returns
+    -------
+    score, None, grid, exp_norm, theory_norm
+        (p-value slot is None — not applicable for cosine metric)
+    """
+    grid, exp_interp, theory_interp = interpolate_to_common_grid(
+        exp_x, exp_y, theory_x, theory_y
+    )
+    if grid is None:
+        return None, None, None, None, None
+
+    if region is not None:
+        mask = (grid >= region[0]) & (grid <= region[1])
+        if mask.sum() < 10:
+            return None, None, None, None, None
+        grid = grid[mask]
+        exp_interp = exp_interp[mask]
+        theory_interp = theory_interp[mask]
+
+    exp_norm = normalize_spectrum(exp_interp)
+    theory_norm = normalize_spectrum(theory_interp)
+
+    # scipy cosine() returns distance; similarity = 1 - distance
+    # Guard against zero-vectors
+    if np.allclose(exp_norm, 0) or np.allclose(theory_norm, 0):
+        return 0.0, None, grid, exp_norm, theory_norm
+
+    cos_sim = 1.0 - _cosine_distance(exp_norm, theory_norm)
+    sec = cos_sim ** 2
+    return float(sec), None, grid, exp_norm, theory_norm
+
+
+def compute_sfec(exp_x, exp_y, theory_x, theory_y, region=None, sg_window=51):
+    """
+    Squared First-Difference Euclidean Cosine (SFEC) similarity.
+
+    Compares the **first derivative** of both spectra via the cosine angle.
+    This naturally removes:
+      - Constant baseline offsets
+      - Linear baseline slopes
+      - Slow baseline curvature
+    and emphasises peak *shapes* over flat noisy regions.
+
+    The derivative is computed with a Savitzky-Golay filter (``savgol_filter``
+    with ``deriv=1``), which simultaneously **smooths** the spectrum and
+    differentiates — making SFEC robust to both noise and baseline artefacts
+    in a single step.
+
+    Particularly effective for noisy action spectra (IR-UV ion-dip, IRMPD).
+
+    Parameters
+    ----------
+    sg_window : int
+        Savitzky-Golay window length for the derivative (odd, ≥ 5).
+        Larger = more smoothing of noise.  Default 51.
+
+    Reference: Samuel et al., ACS Omega 2021, 6, 2060–2065.
+
+    Returns
+    -------
+    score, None, grid, exp_norm, theory_norm
+    """
+    grid, exp_interp, theory_interp = interpolate_to_common_grid(
+        exp_x, exp_y, theory_x, theory_y
+    )
+    if grid is None:
+        return None, None, None, None, None
+
+    if region is not None:
+        mask = (grid >= region[0]) & (grid <= region[1])
+        if mask.sum() < 10:
+            return None, None, None, None, None
+        grid = grid[mask]
+        exp_interp = exp_interp[mask]
+        theory_interp = theory_interp[mask]
+
+    # Savitzky-Golay first derivative (smooths + differentiates)
+    if sg_window % 2 == 0:
+        sg_window += 1
+    sg_window = max(sg_window, 5)
+    sg_window = min(sg_window, len(exp_interp) - 1)
+    if sg_window % 2 == 0:
+        sg_window -= 1
+
+    d_exp = savgol_filter(exp_interp, window_length=sg_window, polyorder=2, deriv=1)
+    d_theory = savgol_filter(theory_interp, window_length=sg_window, polyorder=2, deriv=1)
+
+    if np.allclose(d_exp, 0) or np.allclose(d_theory, 0):
+        return 0.0, None, grid, normalize_spectrum(exp_interp), normalize_spectrum(theory_interp)
+
+    cos_sim = 1.0 - _cosine_distance(d_exp, d_theory)
+    sfec = cos_sim ** 2
+
+    return float(sfec), None, grid, normalize_spectrum(exp_interp), normalize_spectrum(theory_interp)
+
+
+def preprocess_spectrum(x, y, smooth_window=0, clip_negative=False):
+    """
+    Optional preprocessing before similarity scoring.
+
+    Parameters
+    ----------
+    x, y : arrays
+        Wavenumber and intensity.
+    smooth_window : int
+        Savitzky-Golay window length (odd). 0 = no smoothing.
+    clip_negative : bool
+        If True, set negative intensities to zero (removes dip artefacts).
+
+    Returns
+    -------
+    x, y_processed : arrays (same length)
+    """
+    y_out = np.array(y, dtype=float).copy()
+    if smooth_window > 0:
+        if smooth_window % 2 == 0:
+            smooth_window += 1
+        polyorder = min(2, smooth_window - 1)
+        y_out = savgol_filter(y_out, window_length=smooth_window, polyorder=polyorder)
+    if clip_negative:
+        y_out = np.clip(y_out, 0.0, None)
+    return np.asarray(x), y_out
+
+
+# Metric registry — maps short name → function
+AVAILABLE_METRICS = {
+    'PCC':  compute_pcc,
+    'SEC':  compute_sec,
+    'SFEC': compute_sfec,
+}
+
+
+def compute_similarity(exp_x, exp_y, theory_x, theory_y,
+                       region=None, metric='SFEC'):
+    """
+    Unified interface: compute spectral similarity using the chosen metric.
+
+    Parameters
+    ----------
+    metric : str
+        One of 'PCC', 'SEC', 'SFEC'.
+
+    Returns
+    -------
+    score, p_value, grid, exp_norm, theory_norm
+    """
+    func = AVAILABLE_METRICS.get(metric.upper())
+    if func is None:
+        raise ValueError(f"Unknown metric '{metric}'. Choose from {list(AVAILABLE_METRICS)}")
+    return func(exp_x, exp_y, theory_x, theory_y, region=region)
+
+
 def score_label(r, thresholds=None):
     """
     Human-readable label based on adjustable thresholds for IR-UV action spectra.
@@ -179,9 +356,9 @@ def score_label(r, thresholds=None):
 
 def compute_batch_pcc(structures, exp_x, exp_y, diagnostic_regions,
                       freq_scale=0.967, bw_frac=0.007, x_range=(500.0, 2200.0),
-                      shift=0.0, broaden_func=None):
+                      shift=0.0, broaden_func=None, metric='PCC'):
     """
-    Run PCC analysis for multiple DFT structures against experimental data.
+    Run similarity analysis for multiple DFT structures against experimental data.
     
     Parameters:
     -----------
@@ -202,11 +379,13 @@ def compute_batch_pcc(structures, exp_x, exp_y, diagnostic_regions,
     broaden_func : callable, optional
         Broadening function with signature (freqs, intens, x_range, bw_frac, npoints).
         If None, imports broaden_spectrum_felix from DFT_Parsers.
+    metric : str
+        Similarity metric — 'PCC', 'SEC', or 'SFEC'.
     
     Returns:
     --------
     all_results : list of dict
-        Per-structure PCC scores for each region.
+        Per-structure similarity scores for each region.
     """
     if broaden_func is None:
         from .DFT_Parsers import broaden_spectrum_felix
@@ -221,18 +400,21 @@ def compute_batch_pcc(structures, exp_x, exp_y, diagnostic_regions,
         )
         theory_x_shifted = theory_x + shift
         
-        struct_pcc = {'filename': struct['filename']}
+        struct_scores = {'filename': struct['filename']}
         for region_name, region_range in diagnostic_regions.items():
-            r, p, _, _, _ = compute_pcc(exp_x, exp_y, theory_x_shifted, theory_y, region=region_range)
-            struct_pcc[region_name] = r if r is not None else np.nan
-        all_results.append(struct_pcc)
+            score, _, _, _, _ = compute_similarity(
+                exp_x, exp_y, theory_x_shifted, theory_y,
+                region=region_range, metric=metric,
+            )
+            struct_scores[region_name] = score if score is not None else np.nan
+        all_results.append(struct_scores)
     
     return all_results
 
 
-def rank_batch_results(all_results, diagnostic_regions):
+def rank_batch_results(all_results, diagnostic_regions, metric='PCC'):
     """
-    Given batch PCC results, compute average PCC, valid region counts, and rank.
+    Given batch similarity results, compute average score, valid region counts, and rank.
     
     Parameters:
     -----------
@@ -240,13 +422,17 @@ def rank_batch_results(all_results, diagnostic_regions):
         Output from compute_batch_pcc.
     diagnostic_regions : dict
         Region definitions used in the batch analysis.
+    metric : str
+        Name of the metric used (for column labelling).
     
     Returns:
     --------
     df_batch : pd.DataFrame
-        Ranked results with 'Average PCC', 'Valid Regions', 'Rank' columns.
+        Ranked results with 'Average <metric>', 'Valid Regions', 'Rank' columns.
     scoring_regions : list of str
         Region names used for averaging (excludes Full Overlap and subset regions).
+    avg_col : str
+        Name of the average score column.
     """
     import pandas as pd
 
@@ -271,12 +457,13 @@ def rank_batch_results(all_results, diagnostic_regions):
     if not scoring_regions:
         scoring_regions = all_region_names
 
-    df_batch['Average PCC'] = df_batch[scoring_regions].mean(axis=1, skipna=True)
+    avg_col = f'Average {metric}'
+    df_batch[avg_col] = df_batch[scoring_regions].mean(axis=1, skipna=True)
     df_batch['Valid Regions'] = df_batch[scoring_regions].notna().sum(axis=1)
-    df_batch['Rank'] = df_batch['Average PCC'].rank(ascending=False, method='min').astype(int)
+    df_batch['Rank'] = df_batch[avg_col].rank(ascending=False, method='min').astype(int)
     df_batch = df_batch.sort_values('Rank')
 
-    return df_batch, scoring_regions
+    return df_batch, scoring_regions, avg_col
 
 
 # ========================================================================================

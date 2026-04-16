@@ -12,7 +12,10 @@ from packages.DFT_Parsers import parse_dft_file, broaden_spectrum_felix
 from packages.PCC_Scoring import (
     DEFAULT_DIAGNOSTIC_REGIONS,
     DEFAULT_PCC_THRESHOLDS,
+    AVAILABLE_METRICS,
     compute_pcc,
+    compute_similarity,
+    preprocess_spectrum,
     score_label,
     compute_batch_pcc,
     rank_batch_results,
@@ -223,7 +226,7 @@ if 'dft_frequencies' in st.session_state:
             xaxis_title="Wavenumber (cm⁻¹)", yaxis_title="Intensity (km/mol)",
             title="DFT IR Spectrum", hovermode='closest', legend=dict(x=0.7, y=0.95)
         )
-        st.plotly_chart(fig_dft, width='stretch')
+        st.plotly_chart(fig_dft, use_container_width=True)
     
     with tab_mpl_dft:
         fig_static, ax = plt.subplots(figsize=(12, 5))
@@ -322,110 +325,6 @@ if 'dft_frequencies' in st.session_state and fullrange_depletion_data_for_opt is
                 "Reference scaling factors from Von der Esch et al.: "
                 "B3LYP = 0.966, PBE = 0.985, PBEh-3c = 0.938, HF-3c = 0.832, GFN2-xTB = 0.999"
             )
-
-# ========================================================================================
-# PCC CONFIGURATION: Diagnostic Regions & Thresholds (only when DFT loaded)
-# ========================================================================================
-if 'dft_frequencies' in st.session_state:
-    with st.expander("⚙️ PCC Scoring Configuration — Regions, Thresholds & Info", expanded=False):
-        cfg_tab_regions, cfg_tab_thresholds, cfg_tab_about = st.tabs(["🎯 Diagnostic Regions", "📏 Score Thresholds", "ℹ️ About PCC"])
-        
-        with cfg_tab_regions:
-            use_custom = st.checkbox(
-                "Enable Custom Diagnostic Regions",
-                value=st.session_state.get('custom_regions_enabled', False),
-                help="Override default C₁₁H₈ regions with your own spectral windows"
-            )
-            st.session_state['custom_regions_enabled'] = use_custom
-            
-            if use_custom:
-                st.caption("'Full Overlap' is always included. Set regions to match your experimental coverage.")
-                
-                if 'diagnostic_regions' not in st.session_state:
-                    st.session_state['diagnostic_regions'] = DEFAULT_DIAGNOSTIC_REGIONS.copy()
-                
-                custom_regions = {"Full Overlap": None}
-                num_regions = st.number_input("Number of custom regions", min_value=1, max_value=8, value=4, step=1)
-                
-                for i in range(num_regions):
-                    col1, col2, col3 = st.columns([2, 1, 1])
-                    with col1:
-                        region_name = st.text_input(
-                            f"Region {i+1} Name",
-                            value=list(DEFAULT_DIAGNOSTIC_REGIONS.keys())[i+1] if i+1 < len(DEFAULT_DIAGNOSTIC_REGIONS) else f"Custom_{i+1}",
-                            key=f"region_name_{i}"
-                        )
-                    with col2:
-                        default_min = 500.0
-                        if i+1 < len(DEFAULT_DIAGNOSTIC_REGIONS):
-                            default_vals = list(DEFAULT_DIAGNOSTIC_REGIONS.values())[i+1]
-                            if default_vals: default_min = float(default_vals[0])
-                        region_min = st.number_input(f"Min (cm⁻¹)", value=default_min, step=50.0, key=f"region_min_{i}", format="%.0f")
-                    with col3:
-                        default_max = 1500.0
-                        if i+1 < len(DEFAULT_DIAGNOSTIC_REGIONS):
-                            default_vals = list(DEFAULT_DIAGNOSTIC_REGIONS.values())[i+1]
-                            if default_vals: default_max = float(default_vals[1])
-                        region_max = st.number_input(f"Max (cm⁻¹)", value=default_max, step=50.0, key=f"region_max_{i}", format="%.0f")
-                    
-                    if region_name and region_min < region_max:
-                        custom_regions[region_name] = (region_min, region_max)
-                
-                st.session_state['diagnostic_regions'] = custom_regions
-                preview_df = pd.DataFrame([
-                    {"Region": name, "Range": f"{rng[0]:.0f}-{rng[1]:.0f} cm⁻¹" if rng else "Full overlap"}
-                    for name, rng in custom_regions.items()
-                ])
-                st.dataframe(preview_df, width='stretch', hide_index=True)
-            else:
-                st.markdown("**Using default C₁₁H₈ isomer regions:**")
-                default_df = pd.DataFrame([
-                    {"Region": name, "Range": f"{rng[0]:.0f}-{rng[1]:.0f} cm⁻¹" if rng else "Full overlap"}
-                    for name, rng in DEFAULT_DIAGNOSTIC_REGIONS.items()
-                ])
-                st.dataframe(default_df, width='stretch', hide_index=True)
-        
-        with cfg_tab_thresholds:
-            st.caption("Set the PCC score boundaries for each verdict category. Values are Pearson r (-1 to 1).")
-            thr_col1, thr_col2, thr_col3 = st.columns(3)
-            with thr_col1:
-                st.session_state["pcc_threshold_excellent"] = st.number_input(
-                    "Excellent ✅ (r ≥)", value=st.session_state.get("pcc_threshold_excellent", DEFAULT_PCC_THRESHOLDS["excellent"]),
-                    min_value=0.0, max_value=1.0, step=0.05, format="%.2f", key="_pcc_thr_exc"
-                )
-            with thr_col2:
-                st.session_state["pcc_threshold_good"] = st.number_input(
-                    "Good 🟡 (r ≥)", value=st.session_state.get("pcc_threshold_good", DEFAULT_PCC_THRESHOLDS["good"]),
-                    min_value=0.0, max_value=1.0, step=0.05, format="%.2f", key="_pcc_thr_good"
-                )
-            with thr_col3:
-                st.session_state["pcc_threshold_weak"] = st.number_input(
-                    "Weak ⚠️ (r ≥)", value=st.session_state.get("pcc_threshold_weak", DEFAULT_PCC_THRESHOLDS["weak"]),
-                    min_value=0.0, max_value=1.0, step=0.05, format="%.2f", key="_pcc_thr_weak"
-                )
-            st.caption("Below **Weak** → **Poor / Rule Out ❌**")
-        
-        with cfg_tab_about:
-            thresholds_info = get_pcc_thresholds()
-            st.markdown(f"""
-            **PCC** measures correlation between experimental and theoretical peak *positions* after min-max normalization to [0,1] — making it **intensity-independent**.
-            
-            | Verdict | Threshold |
-            |---|---|
-            | Excellent ✅ | r ≥ {thresholds_info['excellent']:.2f} |
-            | Good 🟡 | r ≥ {thresholds_info['good']:.2f} |
-            | Weak ⚠️ | r ≥ {thresholds_info['weak']:.2f} |
-            | Poor ❌ | r < {thresholds_info['weak']:.2f} |
-            
-            *Thresholds lower than absorption IR (Von der Esch 0.75/0.50) due to IR-UV ion dip spectroscopy.*
-            
-            **Tips:** Use regional scores for isomer discrimination. Compare multiple structures — highest PCC wins. Visual inspection remains critical.
-            
-            ---
-            **Reference:** Von der Esch, B.; Peters, L. D. M.; Sauerland, L.; Ochsenfeld, C.
-            *J. Chem. Theory Comput.* **2021**, 17, 985–995.
-            [DOI: 10.1021/acs.jctc.0c01279](https://doi.org/10.1021/acs.jctc.0c01279)
-            """)
 
 # Experimental vs Theoretical Comparison
 st.markdown("---")
@@ -529,51 +428,220 @@ with st.expander(
         except Exception as exc:
             st.error(f"Failed to read file: {exc}")
 
+# ---- Scoring Configuration: Regions, Thresholds & Info ----
+if 'dft_frequencies' in st.session_state:
+    with st.expander("⚙️ Scoring Configuration — Regions, Thresholds & Info", expanded=False):
+        cfg_tab_regions, cfg_tab_thresholds, cfg_tab_about = st.tabs(["🎯 Diagnostic Regions", "📏 Score Thresholds", "ℹ️ About Metrics"])
+
+        with cfg_tab_regions:
+            use_custom = st.checkbox(
+                "Enable Custom Diagnostic Regions",
+                value=st.session_state.get('custom_regions_enabled', False),
+                help="Override default C₁₁H₈ regions with your own spectral windows"
+            )
+            st.session_state['custom_regions_enabled'] = use_custom
+
+            if use_custom:
+                st.caption("'Full Overlap' is always included. Set regions to match your experimental coverage.")
+
+                if 'diagnostic_regions' not in st.session_state:
+                    st.session_state['diagnostic_regions'] = DEFAULT_DIAGNOSTIC_REGIONS.copy()
+
+                custom_regions = {"Full Overlap": None}
+                num_regions = st.number_input("Number of custom regions", min_value=1, max_value=8, value=4, step=1)
+
+                for i in range(num_regions):
+                    col1, col2, col3 = st.columns([2, 1, 1])
+                    with col1:
+                        region_name = st.text_input(
+                            f"Region {i+1} Name",
+                            value=list(DEFAULT_DIAGNOSTIC_REGIONS.keys())[i+1] if i+1 < len(DEFAULT_DIAGNOSTIC_REGIONS) else f"Custom_{i+1}",
+                            key=f"region_name_{i}"
+                        )
+                    with col2:
+                        default_min = 500.0
+                        if i+1 < len(DEFAULT_DIAGNOSTIC_REGIONS):
+                            default_vals = list(DEFAULT_DIAGNOSTIC_REGIONS.values())[i+1]
+                            if default_vals: default_min = float(default_vals[0])
+                        region_min = st.number_input(f"Min (cm⁻¹)", value=default_min, step=50.0, key=f"region_min_{i}", format="%.0f")
+                    with col3:
+                        default_max = 1500.0
+                        if i+1 < len(DEFAULT_DIAGNOSTIC_REGIONS):
+                            default_vals = list(DEFAULT_DIAGNOSTIC_REGIONS.values())[i+1]
+                            if default_vals: default_max = float(default_vals[1])
+                        region_max = st.number_input(f"Max (cm⁻¹)", value=default_max, step=50.0, key=f"region_max_{i}", format="%.0f")
+
+                    if region_name and region_min < region_max:
+                        custom_regions[region_name] = (region_min, region_max)
+
+                st.session_state['diagnostic_regions'] = custom_regions
+                preview_df = pd.DataFrame([
+                    {"Region": name, "Range": f"{rng[0]:.0f}-{rng[1]:.0f} cm⁻¹" if rng else "Full overlap"}
+                    for name, rng in custom_regions.items()
+                ])
+                st.dataframe(preview_df, width='stretch', hide_index=True)
+            else:
+                st.markdown("**Using default C₁₁H₈ isomer regions:**")
+                default_df = pd.DataFrame([
+                    {"Region": name, "Range": f"{rng[0]:.0f}-{rng[1]:.0f} cm⁻¹" if rng else "Full overlap"}
+                    for name, rng in DEFAULT_DIAGNOSTIC_REGIONS.items()
+                ])
+                st.dataframe(default_df, width='stretch', hide_index=True)
+
+        with cfg_tab_thresholds:
+            st.caption("Set the score boundaries for each verdict category. These apply to whichever similarity metric you select.")
+            thr_col1, thr_col2, thr_col3 = st.columns(3)
+            with thr_col1:
+                st.session_state["pcc_threshold_excellent"] = st.number_input(
+                    "Excellent ✅ (score ≥)", value=st.session_state.get("pcc_threshold_excellent", DEFAULT_PCC_THRESHOLDS["excellent"]),
+                    min_value=0.0, max_value=1.0, step=0.05, format="%.2f", key="_pcc_thr_exc"
+                )
+            with thr_col2:
+                st.session_state["pcc_threshold_good"] = st.number_input(
+                    "Good 🟡 (score ≥)", value=st.session_state.get("pcc_threshold_good", DEFAULT_PCC_THRESHOLDS["good"]),
+                    min_value=0.0, max_value=1.0, step=0.05, format="%.2f", key="_pcc_thr_good"
+                )
+            with thr_col3:
+                st.session_state["pcc_threshold_weak"] = st.number_input(
+                    "Weak ⚠️ (score ≥)", value=st.session_state.get("pcc_threshold_weak", DEFAULT_PCC_THRESHOLDS["weak"]),
+                    min_value=0.0, max_value=1.0, step=0.05, format="%.2f", key="_pcc_thr_weak"
+                )
+            st.caption("Below **Weak** → **Poor / Rule Out ❌**")
+
+        with cfg_tab_about:
+            thresholds_info = get_pcc_thresholds()
+            st.markdown(f"""
+            **Three similarity metrics** are computed in parallel. Choose the primary metric below.
+
+            | Metric | Formula | Range | Best for |
+            |--------|---------|-------|----------|
+            | **PCC** | Pearson *r* of normalised curves | −1 … 1 | Clean absorption IR |
+            | **SEC** | cos²(θ) between normalised vectors | 0 … 1 | Moderate noise |
+            | **SFEC** | cos²(θ) of **first-derivative** vectors (SG smoothed) | 0 … 1 | **Noisy action spectra** (IR-UV, IRMPD) — removes baseline & slope artefacts |
+
+            **Verdict thresholds** (applied to whichever metric is selected):
+
+            | Verdict | Threshold |
+            |---|---|
+            | Excellent ✅ | score ≥ {thresholds_info['excellent']:.2f} |
+            | Good 🟡 | score ≥ {thresholds_info['good']:.2f} |
+            | Weak ⚠️ | score ≥ {thresholds_info['weak']:.2f} |
+            | Poor ❌ | score < {thresholds_info['weak']:.2f} |
+
+            *Default thresholds are tuned for action spectra (IR-UV ion dip, IRMPD), which are noisier than direct absorption.*
+
+            **Tips:** Use SFEC for action spectra with noisy baselines. Use regional scores for isomer discrimination. Compare multiple structures — highest score wins. Visual inspection remains critical.
+
+            ---
+            **References:**
+            - Von der Esch, B. et al. *J. Chem. Theory Comput.* **2021**, 17, 985–995. [DOI: 10.1021/acs.jctc.0c01279](https://doi.org/10.1021/acs.jctc.0c01279)
+            - Samuel, A. Z. et al. *ACS Omega* **2021**, 6, 2060–2065. [DOI: 10.1021/acsomega.0c05041](https://doi.org/10.1021/acsomega.0c05041)
+            """)
+
 # Check if experimental data is available
 fullrange_depletion_data = st.session_state.get("fullrange_depletion_data", None)
 
 if fullrange_depletion_data is not None and 'dft_x_broad' in st.session_state:
-    col1, col2, col3 = st.columns([2, 2, 1])
+    col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
     with col1:
         shift_theory = st.number_input("Shift Theory (cm⁻¹)", value=st.session_state.get("shift_theory", 0.0), step=1.0, format="%.1f",
                                       help="Shift theoretical spectrum for alignment", key="shift_theory")
     with col2:
+        primary_metric = st.selectbox(
+            "Similarity Metric",
+            options=list(AVAILABLE_METRICS.keys()),
+            index=2,  # default SFEC
+            help="**PCC** — Pearson r (sensitive to noise/baseline). "
+                 "**SEC** — Cosine similarity² (intensity pattern). "
+                 "**SFEC** — First-derivative cosine² (robust to baseline & noise, recommended for action spectra).",
+            key="_metric_choice",
+        )
+    with col3:
         invert_theory = st.checkbox("Invert Theory", value=False, key="invert_theory",
                                    help="Invert theoretical spectrum if needed")
-    with col3:
+    with col4:
         run_comparison = st.button("📊 Compare", type="primary", width='stretch')
-    
+
+    # Warn if data was already smoothed upstream
+    _already_smoothed = st.session_state.get("data_display_option") == "Smoothed"
+    _prev_sw = st.session_state.get("smoothing_window", None)
+    if _already_smoothed and _prev_sw:
+        st.warning(
+            f"⚠️ Your experimental spectrum was **already smoothed** in Section 3.0 "
+            f"(Savitzky-Golay window = {_prev_sw}). Applying additional smoothing here "
+            f"risks **over-smoothing**, which can wash out real peaks and artificially inflate scores. "
+            f"Consider uploading **raw / unsmoothed** data instead, or leave preprocessing off below."
+        )
+
+    # Preprocessing options
+    with st.expander("🔧 Experimental spectrum preprocessing", expanded=False):
+        st.caption(
+            "Optional preprocessing applied to the experimental spectrum before scoring. "
+            "Smoothing reduces high-frequency noise; clipping removes negative baseline artefacts. "
+            "**Note:** SFEC already smooths internally via its Savitzky-Golay derivative — "
+            "extra smoothing is usually not needed when using SFEC."
+        )
+        pp_col1, pp_col2 = st.columns(2)
+        with pp_col1:
+            pp_smooth = st.number_input(
+                "Savitzky-Golay smooth window", value=0, min_value=0, max_value=101, step=2,
+                help="0 = off. Odd window size for SG smoothing (e.g. 11). Reduces noise.",
+                key="_pp_smooth",
+            )
+        with pp_col2:
+            pp_clip = st.checkbox(
+                "Clip negative values to zero",
+                value=False,
+                help="Removes negative baseline dips from action spectra.",
+                key="_pp_clip",
+            )
+
     # Compute comparison when button pressed, store results in session state
     if run_comparison:
         exp_x = fullrange_depletion_data.iloc[:, 0].values
         exp_y = fullrange_depletion_data.iloc[:, 4].values
+
+        # Apply preprocessing if requested
+        if pp_smooth > 0 or pp_clip:
+            exp_x, exp_y = preprocess_spectrum(exp_x, exp_y,
+                                               smooth_window=pp_smooth,
+                                               clip_negative=pp_clip)
+
         theory_x_shifted = st.session_state['dft_x_broad'] + shift_theory
         theory_y = st.session_state['dft_y_broad'].copy()
         if invert_theory:
             theory_y = -theory_y
-        
-        # Compute PCC for all diagnostic regions
+
+        # Compute ALL metrics for each diagnostic region
         DIAGNOSTIC_REGIONS = get_diagnostic_regions()
         pcc_results = []
         for region_name, region_range in DIAGNOSTIC_REGIONS.items():
-            r, p, grid, exp_norm, theory_norm = compute_pcc(
-                exp_x, exp_y, theory_x_shifted, theory_y, region=region_range
-            )
-            label, color = ui_score_label(r)
-            pcc_results.append({
+            row = {
                 "Region": region_name,
                 "Range (cm⁻¹)": f"{region_range[0]}–{region_range[1]}" if region_range else "Full",
-                "PCC (r)": round(r, 4) if r is not None else None,
-                "p-value": f"{p:.2e}" if p is not None else None,
-                "Verdict": label,
-            })
-        
+            }
+            for metric_name in AVAILABLE_METRICS:
+                score, p_val, _, _, _ = compute_similarity(
+                    exp_x, exp_y, theory_x_shifted, theory_y,
+                    region=region_range, metric=metric_name,
+                )
+                row[metric_name] = round(score, 4) if score is not None else None
+                if metric_name == 'PCC' and p_val is not None:
+                    row["p-value"] = f"{p_val:.2e}"
+
+            # Verdict uses the user-selected primary metric
+            primary_score = row.get(primary_metric)
+            label, color = ui_score_label(primary_score)
+            row["Verdict"] = label
+            pcc_results.append(row)
+
         # Persist all results in session state
         st.session_state['_comp_exp_x'] = exp_x
         st.session_state['_comp_exp_y'] = exp_y
         st.session_state['_comp_theory_x'] = theory_x_shifted
         st.session_state['_comp_theory_y'] = theory_y
         st.session_state['_comp_pcc_results'] = pcc_results
+        st.session_state['_comp_primary_metric'] = primary_metric
         st.session_state['_comp_done'] = True
     
     # ---- Display persisted results (survives widget interactions) ----
@@ -603,7 +671,7 @@ if fullrange_depletion_data is not None and 'dft_x_broad' in st.session_state:
                 yaxis2=dict(title="Intensity (km/mol)", side='right', overlaying='y', showgrid=False),
                 title="Experimental vs DFT Comparison", hovermode='x unified', legend=dict(x=0.02, y=0.98)
             )
-            st.plotly_chart(fig_comp, width='stretch')
+            st.plotly_chart(fig_comp, use_container_width=True)
         
         with tab_comp_mpl:
             fig_comp_static, ax1 = plt.subplots(figsize=(14, 6))
@@ -625,49 +693,57 @@ if fullrange_depletion_data is not None and 'dft_x_broad' in st.session_state:
             add_plot_to_report_button(fig_comp_static, "Experimental vs DFT Comparison",
                                       key_suffix="exp_vs_dft", description="Comparison of experimental and DFT-calculated IR spectra")
         
-        # --- PCC Results ---
-        st.markdown("### 📐 PCC Scoring Results")
+        # --- Scoring Results ---
+        _pm = st.session_state.get('_comp_primary_metric', 'SFEC')
+        st.markdown(f"### 📐 Spectral Similarity — all metrics  (verdict uses **{_pm}**)")
         df_pcc = pd.DataFrame(pcc_results)
-        
+
         def highlight_verdict(row):
-            if "Excellent" in str(row["Verdict"]):
-                return ['', '', '', '', "background-color: #d4edda; color: #155724; font-weight: bold"]
-            elif "Good" in str(row["Verdict"]) or "Weak" in str(row["Verdict"]):
-                return ['', '', '', '', "background-color: #fff3cd; color: #856404"]
+            ncols = len(row)
+            base = [''] * (ncols - 1)
+            verdict = str(row["Verdict"])
+            if "Excellent" in verdict:
+                return base + ["background-color: #d4edda; color: #155724; font-weight: bold"]
+            elif "Good" in verdict or "Weak" in verdict:
+                return base + ["background-color: #fff3cd; color: #856404"]
             else:
-                return ['', '', '', '', "background-color: #f8d7da; color: #721c24"]
-        
+                return base + ["background-color: #f8d7da; color: #721c24"]
+
         st.dataframe(df_pcc.style.apply(highlight_verdict, axis=1), width='stretch', hide_index=True)
-        
-        # Bar chart
+
+        # Bar chart — uses the primary metric
         fig_pcc, ax_pcc = plt.subplots(figsize=(10, 4))
-        valid = df_pcc.dropna(subset=["PCC (r)"])
+        valid = df_pcc.dropna(subset=[_pm])
         thresholds = get_pcc_thresholds()
         colors_bar = [
             "#28a745" if r >= thresholds["excellent"] else "#ffc107" if r >= thresholds["good"] else "#dc3545"
-            for r in valid["PCC (r)"]
+            for r in valid[_pm]
         ]
-        ax_pcc.barh(valid["Region"], valid["PCC (r)"], color=colors_bar, alpha=0.8)
+        ax_pcc.barh(valid["Region"], valid[_pm], color=colors_bar, alpha=0.8)
         ax_pcc.axvline(thresholds["good"], color='orange', linestyle='--', linewidth=1.2, label=f'Good ({thresholds["good"]:.2f})', alpha=0.7)
         ax_pcc.axvline(thresholds["excellent"], color='green', linestyle='--', linewidth=1.2, label=f'Excellent ({thresholds["excellent"]:.2f})', alpha=0.7)
         ax_pcc.axvline(0.0, color='black', linestyle='-', linewidth=0.8)
-        ax_pcc.set_xlabel("Pearson r", fontsize=11)
-        ax_pcc.set_title("Regional PCC Scores", fontsize=13, fontweight='bold')
-        ax_pcc.set_xlim(-1, 1); ax_pcc.legend(fontsize=9, loc='lower right'); ax_pcc.grid(True, axis='x', alpha=0.3)
+        _x_label = "Pearson r" if _pm == "PCC" else f"{_pm} score"
+        ax_pcc.set_xlabel(_x_label, fontsize=11)
+        ax_pcc.set_title(f"Regional {_pm} Scores", fontsize=13, fontweight='bold')
+        _xlim = (-1, 1) if _pm == "PCC" else (0, 1)
+        ax_pcc.set_xlim(*_xlim)
+        ax_pcc.legend(fontsize=9, loc='lower right'); ax_pcc.grid(True, axis='x', alpha=0.3)
         fig_pcc.tight_layout()
         st.pyplot(fig_pcc)
-        add_plot_to_report_button(fig_pcc, "PCC Region Scores", key_suffix="pcc_scores",
-                                  description="Pearson correlation scores per diagnostic spectral region")
-        
+        add_plot_to_report_button(fig_pcc, f"{_pm} Region Scores", key_suffix="pcc_scores",
+                                  description=f"{_pm} similarity scores per diagnostic spectral region")
+
         # --- Structure Assignment Decision ---
         st.markdown("#### 🧪 Structure Assignment Decision")
-        full_r = df_pcc[df_pcc["Region"] == "Full Overlap"]["PCC (r)"].values
-        full_r = full_r[0] if len(full_r) > 0 and not pd.isna(full_r[0]) else None
-        fp_r = df_pcc[df_pcc["Region"] == "Fingerprint"]["PCC (r)"].values
-        fp_r = fp_r[0] if len(fp_r) > 0 and not pd.isna(fp_r[0]) else None
-        cc_r = df_pcc[df_pcc["Region"] == "C≡C Stretch"]["PCC (r)"].values
-        cc_r = cc_r[0] if len(cc_r) > 0 and not pd.isna(cc_r[0]) else None
-        
+        def _get_score(region_name):
+            vals = df_pcc[df_pcc["Region"] == region_name][_pm].values
+            return vals[0] if len(vals) > 0 and not pd.isna(vals[0]) else None
+
+        full_r = _get_score("Full Overlap")
+        fp_r = _get_score("Fingerprint")
+        cc_r = _get_score("C≡C Stretch")
+
         thresholds_dec = get_pcc_thresholds()
         if full_r is not None and full_r > thresholds_dec["excellent"] and fp_r is not None and fp_r > thresholds_dec["good"]:
             st.success("🟢 **Candidate Structure:** Strong overall and fingerprint agreement.")
@@ -676,7 +752,7 @@ if fullrange_depletion_data is not None and 'dft_x_broad' in st.session_state:
         elif cc_r is not None and cc_r < thresholds_dec["weak"]:
             st.error("🔴 **Rule Out:** C≡C stretch shows very poor agreement.")
         elif full_r is not None and full_r < thresholds_dec["weak"]:
-            st.error("🔴 **Rule Out:** Overall PCC too low for this structure.")
+            st.error("🔴 **Rule Out:** Overall score too low for this structure.")
         else:
             st.info("ℹ️ **Inconclusive:** Mixed scores. Consider visual inspection and additional regions.")
         
@@ -707,9 +783,17 @@ elif 'dft_x_broad' not in st.session_state:
 if fullrange_depletion_data is not None and len(st.session_state.get('dft_structures', [])) > 1:
     st.markdown("---")
     st.markdown("## Step 4 — Multi-Structure Batch Comparison")
-    st.caption("Rank all candidate structures using PCC scoring across diagnostic regions.")
-    
-    if st.button("🚀 Run Batch PCC Analysis", type="primary"):
+    st.caption("Rank all candidate structures using similarity scoring across diagnostic regions.")
+
+    batch_metric = st.selectbox(
+        "Batch Similarity Metric",
+        options=list(AVAILABLE_METRICS.keys()),
+        index=2,  # SFEC default
+        help="Metric used for ranking structures. SFEC recommended for action spectra.",
+        key="_batch_metric",
+    )
+
+    if st.button(f"🚀 Run Batch {batch_metric} Analysis", type="primary"):
         structures = st.session_state['dft_structures']
         exp_x = fullrange_depletion_data.iloc[:, 0].values
         exp_y = fullrange_depletion_data.iloc[:, 4].values
@@ -726,18 +810,23 @@ if fullrange_depletion_data is not None and len(st.session_state.get('dft_struct
             freq_scale=freq_scale, bw_frac=bw_frac,
             x_range=(x_min, x_max), shift=shift,
             broaden_func=broaden_spectrum_felix,
+            metric=batch_metric,
         )
         progress_bar.progress(1.0)
         
-        df_batch, scoring_regions = rank_batch_results(all_results, DIAGNOSTIC_REGIONS)
+        df_batch, scoring_regions, avg_col = rank_batch_results(
+            all_results, DIAGNOSTIC_REGIONS, metric=batch_metric,
+        )
         
         # Persist in session state
         st.session_state['_batch_df'] = df_batch
         st.session_state['_batch_regions'] = list(DIAGNOSTIC_REGIONS.keys())
         st.session_state['_batch_scoring_regions'] = scoring_regions
+        st.session_state['_batch_avg_col'] = avg_col
+        st.session_state['_batch_metric_used'] = batch_metric
         st.session_state['_batch_params'] = {
             'freq_scale': freq_scale, 'bw_frac': bw_frac, 'shift': shift,
-            'n_structures': len(structures)
+            'n_structures': len(structures), 'metric': batch_metric,
         }
         st.session_state['_batch_exp_x'] = exp_x
         st.session_state['_batch_done'] = True
@@ -748,15 +837,28 @@ if fullrange_depletion_data is not None and len(st.session_state.get('dft_struct
         regions_to_plot = st.session_state['_batch_regions']
         scoring_regions = st.session_state['_batch_scoring_regions']
         
+        _bm = st.session_state.get('_batch_metric_used', 'PCC')
+        _avg_col = st.session_state.get('_batch_avg_col', f'Average {_bm}')
+        # Guard against stale session state from previous code versions
+        if _avg_col not in df_batch.columns:
+            _avg_candidates = [c for c in df_batch.columns if c.startswith('Average')]
+            _avg_col = _avg_candidates[0] if _avg_candidates else None
+
         best_match = df_batch.iloc[0]
-        st.success(f"🥇 **Best Match:** {best_match['filename']} (Avg PCC: {best_match['Average PCC']:.3f}, {best_match['Valid Regions']:.0f} regions)")
-        
+        if _avg_col and _avg_col in df_batch.columns:
+            st.success(f"🥇 **Best Match:** {best_match['filename']} (Avg {_bm}: {best_match[_avg_col]:.3f}, {best_match['Valid Regions']:.0f} regions)")
+        else:
+            st.success(f"🥇 **Best Match:** {best_match['filename']}")
+            st.warning("⚠️ Stale batch results from a previous session. Please re-run the batch analysis.")
+
         nan_counts = df_batch[scoring_regions].isna().sum()
         if nan_counts.sum() > 0:
             st.warning(f"⚠️ Missing coverage: {', '.join([f'{r} ({nan_counts[r]})' for r in nan_counts[nan_counts > 0].index])}")
-        
+
+        _vmin = -1 if _bm == 'PCC' else 0
+        _grad_cols = [_avg_col] if (_avg_col and _avg_col in df_batch.columns) else []
         st.dataframe(
-            df_batch.style.background_gradient(subset=['Average PCC'], cmap='RdYlGn', vmin=-1, vmax=1),
+            df_batch.style.background_gradient(subset=_grad_cols, cmap='RdYlGn', vmin=_vmin, vmax=1) if _grad_cols else df_batch,
             width='stretch', hide_index=True
         )
         
@@ -776,63 +878,66 @@ if fullrange_depletion_data is not None and len(st.session_state.get('dft_struct
                                   label=region, color=colors_regions[i], alpha=0.8)
             ax_batch.set_yticks(x_pos + width * (num_regions - 1) / 2)
             ax_batch.set_yticklabels(df_batch['filename'].values)
-            ax_batch.set_xlabel('PCC Score (r)', fontsize=12)
-            ax_batch.set_title('Multi-Structure PCC Comparison', fontsize=14, fontweight='bold')
+            _xlabel = 'Pearson r' if _bm == 'PCC' else f'{_bm} score'
+            ax_batch.set_xlabel(_xlabel, fontsize=12)
+            ax_batch.set_title(f'Multi-Structure {_bm} Comparison', fontsize=14, fontweight='bold')
             thresholds_batch = get_pcc_thresholds()
             ax_batch.axvline(thresholds_batch["good"], color='orange', linestyle='--', linewidth=1, alpha=0.5, label=f'Good ({thresholds_batch["good"]:.2f})')
             ax_batch.axvline(thresholds_batch["excellent"], color='green', linestyle='--', linewidth=1, alpha=0.5, label=f'Excellent ({thresholds_batch["excellent"]:.2f})')
             ax_batch.legend(loc='lower right', fontsize=8, ncol=2)
-            ax_batch.grid(True, axis='x', alpha=0.3); ax_batch.set_xlim(-0.2, 1.0)
+            _xlim = (-0.2, 1.0) if _bm == 'PCC' else (0, 1.0)
+            ax_batch.grid(True, axis='x', alpha=0.3); ax_batch.set_xlim(*_xlim)
             fig_batch.tight_layout()
             st.pyplot(fig_batch)
-            add_plot_to_report_button(fig_batch, "Multi-Structure PCC Comparison", key_suffix="batch_pcc",
-                                      description="Batch comparison of all candidate structures using PCC scoring")
+            add_plot_to_report_button(fig_batch, f"Multi-Structure {_bm} Comparison", key_suffix="batch_pcc",
+                                      description=f"Batch comparison of all candidate structures using {_bm} scoring")
         
         with tab_batch_heat:
             n_structs = len(df_batch)
             fig_heat, ax_heat = plt.subplots(figsize=(10, max(5, n_structs * 0.4)))
             heat_data = df_batch[regions_to_plot].values
-            im = ax_heat.imshow(heat_data, cmap='RdYlGn', aspect='auto', vmin=-0.5, vmax=1.0)
+            _hmin = -0.5 if _bm == 'PCC' else 0.0
+            im = ax_heat.imshow(heat_data, cmap='RdYlGn', aspect='auto', vmin=_hmin, vmax=1.0)
             ax_heat.set_xticks(np.arange(len(regions_to_plot)))
             ax_heat.set_yticks(np.arange(n_structs))
             ax_heat.set_xticklabels(regions_to_plot, rotation=45, ha='right')
             ax_heat.set_yticklabels(df_batch['filename'].values)
             cbar = plt.colorbar(im, ax=ax_heat)
-            cbar.set_label('PCC Score', rotation=270, labelpad=20)
+            cbar.set_label(f'{_bm} Score', rotation=270, labelpad=20)
             for i in range(n_structs):
                 for j in range(len(regions_to_plot)):
                     value = heat_data[i, j]
                     if not np.isnan(value):
                         ax_heat.text(j, i, f'{value:.2f}', ha="center", va="center",
                                      color="black" if value < 0.5 else "white", fontsize=9, fontweight='bold')
-            ax_heat.set_title('PCC Heatmap: All Structures vs Experimental', fontsize=14, fontweight='bold')
+            ax_heat.set_title(f'{_bm} Heatmap: All Structures vs Experimental', fontsize=14, fontweight='bold')
             fig_heat.tight_layout()
             st.pyplot(fig_heat)
-            add_plot_to_report_button(fig_heat, "PCC Heatmap", key_suffix="pcc_heatmap",
-                                      description="Heatmap showing PCC scores for all structures across regions")
+            add_plot_to_report_button(fig_heat, f"{_bm} Heatmap", key_suffix="pcc_heatmap",
+                                      description=f"Heatmap showing {_bm} scores for all structures across regions")
         
         # Save batch results
         if st.checkbox("💾 Save Batch Results", key="save_batch"):
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             file_directory = st.session_state.get("file_directory", "./output")
-            batch_filename = os.path.join(file_directory, f"batch_pcc_comparison_{timestamp}.csv")
+            batch_filename = os.path.join(file_directory, f"batch_{_bm.lower()}_comparison_{timestamp}.csv")
             df_batch.to_csv(batch_filename, index=False)
             
             params = st.session_state['_batch_params']
             exp_x = st.session_state['_batch_exp_x']
-            summary_text = f"""Multi-Structure PCC Comparison Report
+            summary_text = f"""Multi-Structure {_bm} Comparison Report
 Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-Structures: {params['n_structures']} | Scale: {params['freq_scale']:.3f} | BW: {params['bw_frac']*100:.2f}% | Shift: {params['shift']:.1f} cm⁻¹
+Metric: {_bm} | Structures: {params['n_structures']} | Scale: {params['freq_scale']:.3f} | BW: {params['bw_frac']*100:.2f}% | Shift: {params['shift']:.1f} cm⁻¹
 Exp range: {exp_x.min():.1f} - {exp_x.max():.1f} cm⁻¹\n\nRankings:\n"""
             DIAGNOSTIC_REGIONS = get_diagnostic_regions()
             for _, row in df_batch.iterrows():
-                summary_text += f"\n{row['Rank']:.0f}. {row['filename']} — Avg PCC: {row['Average PCC']:.3f}"
+                summary_text += f"\n{row['Rank']:.0f}. {row['filename']} — Avg {_bm}: {row[_avg_col]:.3f}"
                 for region_name in DIAGNOSTIC_REGIONS.keys():
                     val = row.get(region_name, np.nan)
                     summary_text += f"\n   {region_name}: {val:.3f}" if not np.isnan(val) else f"\n   {region_name}: N/A"
                 summary_text += "\n"
             
-            report_filename = os.path.join(file_directory, f"batch_pcc_report_{timestamp}.txt")
+            report_filename = os.path.join(file_directory, f"batch_{_bm.lower()}_report_{timestamp}.txt")
             with open(report_filename, 'w') as f:
                 f.write(summary_text)
             st.success(f"✅ Saved: `{batch_filename}` and `{report_filename}`")
