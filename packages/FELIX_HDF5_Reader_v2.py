@@ -580,7 +580,7 @@ class FELIX_HDF5_Reader:
         
         return self.wavenumber_table
     
-    def visualize_imported_unique_wavenumbers(self, min_count=None):
+    def visualize_imported_unique_wavenumbers(self, min_count=None, max_count=None):
         '''
         Get all unique wavenumbers across all files and their occurrence counts.
         
@@ -618,6 +618,10 @@ class FELIX_HDF5_Reader:
         
         if min_count is not None:
             unique_wavenumbers_df = unique_wavenumbers_df[unique_wavenumbers_df["Count"] >= min_count+1]
+            self.unique_wavenumbers = unique_wavenumbers_df["Unique Wavenumbers"].values
+
+        if max_count is not None:
+            unique_wavenumbers_df = unique_wavenumbers_df[unique_wavenumbers_df["Count"] <= max_count]
             self.unique_wavenumbers = unique_wavenumbers_df["Unique Wavenumbers"].values
 
         # Display summary
