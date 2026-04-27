@@ -9,6 +9,7 @@ Supported formats:
   - ORCA stick spectrum (.ir.stk)
   - ORCA broadened spectrum (.ir.dat)
   - Pre-convoluted spectrum (_conv_spectrum.txt / _convoluted.txt)
+  - MLMD IR spectrum (Freq_MD / Inten_MD two-column .txt)
   - Custom analysis report
 
 All parser functions return (frequencies, intensities, metadata) where
@@ -28,6 +29,7 @@ __all__ = [
     'parse_orca_stick',
     'parse_orca_broadened',
     'parse_convoluted_spectrum',
+    'parse_mlmd_ir',
     'parse_dft_file',
 ]
 
@@ -474,6 +476,45 @@ def parse_orca_out_anharmonic(content):
     return np.array(all_freqs), np.array(all_intens), metadata
 
 
+def parse_mlmd_ir(content):
+    """
+    Parse MLMD (Machine Learning Molecular Dynamics) IR spectrum text file.
+
+    Expected format::
+
+        # Freq_MD (cm^-1) Inten_MD (Normalized intensity)
+        300.0 4.0775e-04
+        301.0 0.0000e+00
+        ...
+
+    Lines starting with '#' are skipped as comments.
+    Returns (frequencies, intensities, metadata).
+    The spectrum is already broadened/convoluted on a 1 cm⁻¹ grid.
+    """
+    frequencies = []
+    intensities = []
+
+    for line in content.split('\n'):
+        stripped = line.strip()
+        if not stripped or stripped.startswith('#'):
+            continue
+        parts = stripped.split()
+        if len(parts) >= 2:
+            try:
+                freq = float(parts[0])
+                inten = float(parts[1])
+                frequencies.append(freq)
+                intensities.append(inten)
+            except ValueError:
+                continue
+
+    return (
+        np.array(frequencies),
+        np.array(intensities),
+        {'type': 'mlmd_ir', 'broadened': True},
+    )
+
+
 def parse_convoluted_spectrum(content):
     """
     Parse a pre-convoluted / pre-broadened spectrum text file.
@@ -564,6 +605,10 @@ def parse_dft_file(content, filename):
     if ('_conv_spectrum' in fname_lower or '_convoluted' in fname_lower) and fname_lower.endswith('.txt'):
         return _tag(*parse_convoluted_spectrum(content), 'Pre-convoluted spectrum (.txt)')
 
+    # MLMD IR spectrum (by filename convention: contains '_qm' suffix before .txt)
+    if fname_lower.endswith('.txt') and '_qm' in fname_lower:
+        return _tag(*parse_mlmd_ir(content), 'MLMD IR spectrum (.txt)')
+
     # Gaussian anharmonic extracted text (by filename convention)
     if 'anhar' in fname_lower and fname_lower.endswith('.txt'):
         return _tag(*parse_gaussian_anharmonic(content), 'Gaussian anharmonic text (.txt)')
@@ -585,6 +630,10 @@ def parse_dft_file(content, filename):
     # Gaussian anharmonic (text block, may arrive without .txt extension)
     if 'Fundamental Bands' in content and ('Overtones' in content or 'Combination Bands' in content):
         return _tag(*parse_gaussian_anharmonic(content), 'Gaussian anharmonic (content)')
+
+    # MLMD IR spectrum (content-based: comment header with 'Freq_MD')
+    if 'Freq_MD' in content[:500]:
+        return _tag(*parse_mlmd_ir(content), 'MLMD IR spectrum (header)')
 
     # Pre-convoluted spectrum (header-based fallback)
     if content.lstrip().startswith('Frequencies') or content.lstrip().startswith(' Frequencies'):

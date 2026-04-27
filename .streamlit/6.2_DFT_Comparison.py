@@ -97,7 +97,8 @@ if uploaded_files:
                 row = {
                     '#': i + 1,
                     'File': struct['filename'],
-                    'Modes': len(struct['frequencies']),
+                    'Format': struct['metadata'].get('detected_as', '—'),
+                    'Points': len(struct['frequencies']),
                     'Freq Range (cm⁻¹)': f"{struct['frequencies'].min():.1f} - {struct['frequencies'].max():.1f}"
                 }
                 if struct['metadata'].get('type') == 'anharmonic':
@@ -183,18 +184,30 @@ if 'dft_frequencies' in st.session_state:
     with col_s4:
         x_max = st.number_input("Wavenum. Max (cm⁻¹)", value=2200.0, step=50.0)
     
+    _meta = st.session_state.get('dft_metadata', {})
+    _is_prebroadened = _meta.get('broadened', False)
+
     # Apply frequency scaling
     scaled_frequencies = st.session_state['dft_frequencies'] * freq_scale_factor
-    
-    # Apply broadening with scaled frequencies
-    x_broad, y_broad = broaden_spectrum_felix(
-        scaled_frequencies,
-        st.session_state['dft_intensities'],
-        x_range=(x_min, x_max),
-        bw_frac=bw_frac,
-        npoints=4000
-    )
-    
+
+    if _is_prebroadened:
+        st.info(
+            f"ℹ️ **Pre-broadened spectrum detected** (`{_meta.get('detected_as', _meta.get('type', ''))}`). "
+            "Broadening and scaling are skipped — the spectrum is used as-is."
+        )
+        x_broad = st.session_state['dft_frequencies']
+        y_broad = st.session_state['dft_intensities']
+        scaled_frequencies = x_broad
+    else:
+        # Apply broadening with scaled frequencies
+        x_broad, y_broad = broaden_spectrum_felix(
+            scaled_frequencies,
+            st.session_state['dft_intensities'],
+            x_range=(x_min, x_max),
+            bw_frac=bw_frac,
+            npoints=4000
+        )
+
     # Store broadened spectrum, scaled frequencies, and broadening parameters
     st.session_state['dft_x_broad'] = x_broad
     st.session_state['dft_y_broad'] = y_broad
@@ -203,9 +216,9 @@ if 'dft_frequencies' in st.session_state:
     st.session_state['bw_frac'] = bw_frac
     st.session_state['x_min'] = x_min
     st.session_state['x_max'] = x_max
-    
+
     # Show scaling info
-    if abs(freq_scale_factor - 1.0) > 0.001:
+    if not _is_prebroadened and abs(freq_scale_factor - 1.0) > 0.001:
         st.caption(f"📐 Scaled by {freq_scale_factor:.3f} — e.g. {st.session_state['dft_frequencies'][0]:.1f} → {scaled_frequencies[0]:.1f} cm⁻¹")
     
     # DFT spectrum in tabs
@@ -213,28 +226,31 @@ if 'dft_frequencies' in st.session_state:
     
     with tab_plotly_dft:
         fig_dft = go.Figure()
-        fig_dft.add_trace(go.Scatter(
-            x=scaled_frequencies, y=st.session_state['dft_intensities'],
-            mode='markers', marker=dict(size=8, color='red', symbol='line-ns-open'),
-            name='Stick Spectrum (Scaled)'
-        ))
+        if not _is_prebroadened:
+            fig_dft.add_trace(go.Scatter(
+                x=scaled_frequencies, y=st.session_state['dft_intensities'],
+                mode='markers', marker=dict(size=8, color='red', symbol='line-ns-open'),
+                name='Stick Spectrum (Scaled)'
+            ))
         fig_dft.add_trace(go.Scatter(
             x=x_broad, y=y_broad, mode='lines', line=dict(color='blue', width=2),
-            name=f'Broadened (FWHM = {bw_frac*100:.2f}% × ν)'
+            name='MLMD spectrum' if _is_prebroadened else f'Broadened (FWHM = {bw_frac*100:.2f}% × ν)'
         ))
         fig_dft.update_layout(
-            xaxis_title="Wavenumber (cm⁻¹)", yaxis_title="Intensity (km/mol)",
+            xaxis_title="Wavenumber (cm⁻¹)", yaxis_title="Intensity (a.u.)",
             title="DFT IR Spectrum", hovermode='closest', legend=dict(x=0.7, y=0.95)
         )
         st.plotly_chart(fig_dft, use_container_width=True)
-    
+
     with tab_mpl_dft:
         fig_static, ax = plt.subplots(figsize=(12, 5))
-        ax.vlines(scaled_frequencies, 0, st.session_state['dft_intensities'], 
-                  colors='red', alpha=0.6, linewidths=1.5, label='Stick Spectrum (Scaled)')
-        ax.plot(x_broad, y_broad, 'b-', linewidth=2, label=f'Broadened (FWHM = {bw_frac*100:.2f}% × ν)')
+        if not _is_prebroadened:
+            ax.vlines(scaled_frequencies, 0, st.session_state['dft_intensities'],
+                      colors='red', alpha=0.6, linewidths=1.5, label='Stick Spectrum (Scaled)')
+        ax.plot(x_broad, y_broad, 'b-', linewidth=2,
+                label='MLMD spectrum' if _is_prebroadened else f'Broadened (FWHM = {bw_frac*100:.2f}% × ν)')
         ax.set_xlabel("Wavenumber (cm⁻¹)", fontsize=12)
-        ax.set_ylabel("Intensity (km/mol)", fontsize=12)
+        ax.set_ylabel("Intensity (a.u.)", fontsize=12)
         ax.set_title("DFT IR Spectrum", fontsize=14, fontweight='bold')
         ax.legend(fontsize=10); ax.grid(True, alpha=0.3); ax.set_xlim(x_min, x_max)
         fig_static.tight_layout()

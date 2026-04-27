@@ -243,29 +243,31 @@ class ProcessData_REMPI_HDF5:
         --------
         pd.DataFrame : DataFrame with wavelengths as columns and a 'Summed' column
         '''
-        data_dict = {}
+        data_sum = {}    # running sum per wavelength
+        data_count = {}  # number of contributions per wavelength
 
-        # We process the first file to get the structure
-        # (assuming all files have similar wavelength coverage)
         for file_index, file in enumerate(self.files):
             current_file = self.data[file_index]
             
             for wl_index, wavelength in enumerate(current_file.wavelengths):
                 signal = -np.ravel(current_file.signal[wl_index])  # Negate and flatten
                 
-                # Use wavelength as column key
-                # If wavelength already exists, we could average or keep separate
-                if wavelength not in data_dict:
-                    data_dict[wavelength] = signal
+                if wavelength not in data_sum:
+                    data_sum[wavelength] = signal.copy()
+                    data_count[wavelength] = 1
                 else:
-                    # Average with existing data if same wavelength measured multiple times
-                    existing = data_dict[wavelength]
+                    existing = data_sum[wavelength]
                     if len(existing) == len(signal):
-                        data_dict[wavelength] = (existing + signal) / 2
+                        data_sum[wavelength] = existing + signal
+                        data_count[wavelength] += 1
                     else:
-                        # If lengths differ, keep the longer one
+                        # If lengths differ, keep the longer one and reset count
                         if len(signal) > len(existing):
-                            data_dict[wavelength] = signal
+                            data_sum[wavelength] = signal.copy()
+                            data_count[wavelength] = 1
+
+        # Compute proper average
+        data_dict = {wl: data_sum[wl] / data_count[wl] for wl in data_sum}
 
         # Create DataFrame
         self.compiled_dataframe = pd.DataFrame(data_dict)

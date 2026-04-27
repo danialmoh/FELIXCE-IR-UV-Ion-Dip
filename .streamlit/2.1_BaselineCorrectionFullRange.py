@@ -5,6 +5,8 @@ import pandas as pd
 import plotly.graph_objs as go
 import configparser
 import os
+import pickle
+import gzip
 from packages.BaselineCorrection_v2 import *
 from packages.utils import require_state
 from packages.ReportManager import add_plot_to_report_button, init_report_session
@@ -167,6 +169,33 @@ if st.button("**:blue[#2]** 🚢 Export baseline corrected data"):
         st.success(rf"Successfully exported:", icon="✅")
         st.success(rf"baseline corrected mass spectra @ '`{output_fullpath_MassSpectra}`'")
         st.success(rf"baseline corrected data @ '`{output_fullpath_BaselineCorrected}`'")
+
+if st.button("**:blue[#2b]** 💾 Export full dataset for Section 4 (all wavenumbers)"):
+    compilation = st.session_state.get("compilation_baseline_corrected_data")
+    if compilation is None:
+        st.error("⚠️ Please perform baseline correction first.")
+    else:
+        # Trim to last 4 columns per wavenumber (sum_without, sum_with, bl_corr_without, bl_corr_with)
+        trimmed = {}
+        for wn, df in compilation.items():
+            trimmed[wn] = df.iloc[:, -4:]
+
+        export_bundle = {
+            "compilation_baseline_corrected_data": trimmed,
+            "x_mass": st.session_state.get("x_mass"),
+            "unique_wavenumbers": st.session_state.get("unique_wavenumbers"),
+            "plot_columnIndex_withoutIR": st.session_state.get("plot_columnIndex_withoutIR", -2),
+            "plot_columnIndex_withIR": st.session_state.get("plot_columnIndex_withIR", -1),
+        }
+
+        output_dir = st.session_state.get("file_directory", ".")
+        output_path = os.path.join(output_dir, "baseline_corrected_full_dataset.pkl.gz")
+        with gzip.open(output_path, "wb") as f:
+            pickle.dump(export_bundle, f, protocol=pickle.HIGHEST_PROTOCOL)
+        file_size_mb = os.path.getsize(output_path) / (1024 * 1024)
+        st.success(f"✅ Full dataset ({len(trimmed)} wavenumbers) exported to:")
+        st.code(output_path)
+        st.caption(f"File size: {file_size_mb:.1f} MB. Load this in **Section 4** to skip steps 1–2.")
 
 st.markdown("#### Plot parameters")
 

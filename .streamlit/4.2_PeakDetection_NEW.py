@@ -208,6 +208,7 @@ with st.expander("🧪 Step 2: Candidate Formula Matching Options", expanded=Fal
     
     # Define the naphthalene option
     NAPH_CH_OPTION = "Alkylated naphthalene core (C10H8 base + alkyl chains)"
+    ETHYNYL_OPTION = "Ethynyl-bearing species (core + m×C≡CH)"
     
     col1, col2 = st.columns(2)
     
@@ -223,6 +224,7 @@ with st.expander("🧪 Step 2: Candidate Formula Matching Options", expanded=Fal
                     "Cyclic (CnH2n)",
                     "Highly Unsaturated (PAH: CnH2n+2-2u)",
                     NAPH_CH_OPTION,
+                    ETHYNYL_OPTION,
                 ],
                 default=["Highly Unsaturated (PAH: CnH2n+2-2u)", "Alkane (CnH2n+2)"],
                 key="candidate_options_CH"
@@ -242,7 +244,7 @@ with st.expander("🧪 Step 2: Candidate Formula Matching Options", expanded=Fal
                     "Polybrominated Alkenes (CnH(2n-x)Brx)",
                     "Polybrominated Alkynes (CnH(2n-2-x)Brx)",
                 ],
-                default=["Alkyl Halides (Haloalkanes) (CnH(2n+1)Br)"],
+                default=[],
                 key="candidate_options_CHBr"
             )
     
@@ -304,7 +306,37 @@ with st.expander("🧪 Step 2: Candidate Formula Matching Options", expanded=Fal
             ))
         else:
             min_x_total = max_x_total = None
-        
+    
+    # Ethynyl-bearing species parameters
+    if ETHYNYL_OPTION in candidate_options_CH:
+        st.markdown("**Ethynyl-bearing species parameters**")
+        eth_col1, eth_col2, eth_col3, eth_col4 = st.columns(4)
+        with eth_col1:
+            min_ethynyl = st.number_input(
+                "Min ethynyl groups (m)", value=1, min_value=1, max_value=6, step=1,
+                key="min_ethynyl",
+            )
+        with eth_col2:
+            max_ethynyl = st.number_input(
+                "Max ethynyl groups (m)", value=3, min_value=int(min_ethynyl), max_value=6, step=1,
+                key="max_ethynyl",
+            )
+        with eth_col3:
+            min_core_u = st.number_input(
+                "Min core DoU (u_core)", value=0, min_value=0, max_value=15, step=1,
+                key="min_core_u",
+                help="Degrees of unsaturation of the hydrocarbon core (0=alkane, 4=benzene, 7=naphthalene)",
+            )
+        with eth_col4:
+            max_core_u = st.number_input(
+                "Max core DoU (u_core)", value=8, min_value=int(min_core_u), max_value=15, step=1,
+                key="max_core_u",
+            )
+    else:
+        min_ethynyl = max_ethynyl = min_core_u = max_core_u = None
+
+    param_col_br = st.columns(1)[0]
+    with param_col_br:
         max_Br = st.number_input(
             "Max Br atoms (CHBr)",
             value=st.session_state.get("max_Br", 3),
@@ -335,6 +367,8 @@ with st.expander("🧪 Step 2: Candidate Formula Matching Options", expanded=Fal
             return 2 * n_C + 2 - 2 * u
         elif candidate_type == NAPH_CH_OPTION:
             return None
+        elif candidate_type == ETHYNYL_OPTION:
+            return None
         else:
             return None
     
@@ -353,6 +387,21 @@ with st.expander("🧪 Step 2: Candidate Formula Matching Options", expanded=Fal
                             candidates.append(
                                 f"{cand_type}: C{total_c}H{total_h} (n={n_subs}, x={x_total})"
                             )
+            elif cand_type == ETHYNYL_OPTION and min_ethynyl is not None:
+                for m in range(min_ethynyl, max_ethynyl + 1):
+                    for u_core in range(min_core_u, max_core_u + 1):
+                        for n_core in range(min_C, max_C + 1):
+                            total_c = n_core + 2 * m
+                            if total_c > max_C:
+                                break
+                            total_h = 2 * n_core + 2 - 2 * u_core
+                            if total_h < 1:
+                                continue
+                            calc_mass = total_c * 12.0000 + total_h * 1.007825
+                            if abs(calc_mass - target_mz) <= tol:
+                                candidates.append(
+                                    f"{cand_type}: C{total_c}H{total_h} (core=C{n_core}, u_core={u_core}, {m}×C≡CH)"
+                                )
             else:
                 for n_C in range(min_C, max_C + 1):
                     if cand_type == "Highly Unsaturated (PAH: CnH2n+2-2u)":
@@ -428,7 +477,7 @@ with st.expander("🧪 Step 2: Candidate Formula Matching Options", expanded=Fal
                 for k in range(1, max_Br + 1):
                     for n_C in range(min_C, max_C + 1):
                         for u in range(int(min_u), int(max_u) + 1):
-                            n_H = hydrogen_count(cand_type, n_C, u)
+                            n_H = hydrogen_count(cand_type, n_C, u) - k
                             if n_H < 1:
                                 continue
                             calc_mass = n_C * 12.0000 + n_H * 1.007825 + k * Br_mass

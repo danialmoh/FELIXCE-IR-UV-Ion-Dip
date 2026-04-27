@@ -241,3 +241,74 @@ class baseline_REMPI:
         result_df['Summed'] = result_df.drop(columns=['Summed'], errors='ignore').sum(axis=1)
         
         return result_df
+
+    @staticmethod
+    def als_baseline(y, lam=1e6, p=0.01, niter=10):
+        """
+        Asymmetric Least Squares baseline estimation (Eilers & Boelens, 2005).
+
+        Fits a smooth curve that stays below the peaks automatically —
+        no need to identify a flat baseline region.
+
+        Parameters
+        ----------
+        y : array_like
+            Signal data.
+        lam : float
+            Smoothness parameter.  Larger → smoother baseline.
+            Typical range: 1e4 – 1e8.
+        p : float
+            Asymmetry weight (0 < p < 1).  Smaller → baseline hugs
+            below the peaks more tightly.  Typical: 0.001 – 0.05.
+        niter : int
+            Number of re-weighting iterations (10 is usually enough).
+
+        Returns
+        -------
+        z : ndarray
+            Estimated baseline, same length as *y*.
+        """
+        from scipy import sparse
+        from scipy.sparse.linalg import spsolve
+
+        y = np.asarray(y, dtype=float)
+        L = len(y)
+        D = sparse.diags([1, -2, 1], [0, 1, 2], shape=(L - 2, L))
+        DTD = D.T @ D
+        w = np.ones(L)
+        for _ in range(niter):
+            W = sparse.spdiags(w, 0, L, L)
+            z = spsolve(W + lam * DTD, w * y)
+            w = p * (y > z) + (1 - p) * (y <= z)
+        return z
+
+    def process_single_dataframe_als(self, df, lam=1e6, p=0.01, niter=10):
+        """
+        Apply ALS baseline correction to every wavelength column.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Columns are wavelengths (plus optional 'Summed' column).
+        lam, p, niter :
+            See :meth:`als_baseline`.
+
+        Returns
+        -------
+        pd.DataFrame
+            Baseline-corrected columns prefixed with ``bc_`` and a new
+            ``Summed`` column.
+        """
+        corrected_cols = {}
+
+        for col in df.columns:
+            if col == 'Summed':
+                continue
+
+            signal = df[col].values.astype(float)
+            baseline = self.als_baseline(signal, lam=lam, p=p, niter=niter)
+            corrected_cols[f"bc_{col}"] = signal - baseline
+
+        result_df = pd.DataFrame(corrected_cols)
+        result_df['Summed'] = result_df.sum(axis=1)
+        return result_df

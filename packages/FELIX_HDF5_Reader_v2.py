@@ -274,8 +274,34 @@ class FELIX_HDF5_Reader:
             }
             self.data.append(file_data)
             # Print processing confirmation with calibration status
-            cal_status = "✓ Calibrated" if self.calibration_functions[i] is not None else "No calibration"
-            print(f"Processed {self.streamlit[i].name} | Step size: {self.step_sizes[i]} cm⁻¹ | {cal_status}")
+            if self.calibration_functions[i] is not None:
+                # Compute actual shift applied to verify calibration had an effect
+                raw_arr = np.array(self.wavenumbers_raw)
+                cal_arr = np.array(wavenumber)
+                if len(raw_arr) > 0 and len(cal_arr) == len(raw_arr):
+                    shifts = cal_arr - raw_arr
+                    mean_shift = np.mean(shifts)
+                    max_shift = np.max(np.abs(shifts))
+                    # Sample: first raw → first calibrated
+                    sample_raw = raw_arr[0]
+                    sample_cal = cal_arr[0]
+                    if max_shift < 0.01:
+                        cal_status = (
+                            f"✓ Calibration function applied — but NO effective shift detected "
+                            f"(max |Δ| = {max_shift:.4f} cm⁻¹). "
+                            f"Check that calibration table covers this wavenumber range."
+                        )
+                    else:
+                        cal_status = (
+                            f"✓ Calibrated | mean shift = {mean_shift:+.3f} cm⁻¹ | "
+                            f"max |shift| = {max_shift:.3f} cm⁻¹ | "
+                            f"sample: {sample_raw:.2f} → {sample_cal:.2f} cm⁻¹"
+                        )
+                else:
+                    cal_status = "✓ Calibration function applied (could not compare raw vs calibrated lengths)"
+            else:
+                cal_status = "⚠ No calibration"
+            print(f"Processed {self.streamlit[i].name} | Step: {self.step_sizes[i]} cm⁻¹ | {cal_status}")
         return self.data
 
 

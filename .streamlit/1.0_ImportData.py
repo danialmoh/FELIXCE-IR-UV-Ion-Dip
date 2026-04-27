@@ -357,9 +357,17 @@ if uploaded_files:
         if current_cal not in cal_options:
             current_cal = "None (no calibration)"
         
-        # Set the selectbox key before rendering (only if not already set by user)
+        # Set the selectbox key before rendering.
+        # Always sync when auto-match applies (overrides stale "None" from earlier renders).
+        # Only preserve existing widget state when the user made a manual selection.
         widget_key = f"cal_select_{i}_{file.name}"
-        if widget_key not in st.session_state:
+        user_made_manual_selection = (
+            widget_key in st.session_state
+            and st.session_state[widget_key] != "None (no calibration)"
+            and st.session_state[widget_key] in cal_options
+            and st.session_state[widget_key] != auto_match  # user overrode auto-match
+        )
+        if not user_made_manual_selection:
             st.session_state[widget_key] = current_cal
         
         col1, col2, col3 = st.columns([3, 2, 1])
