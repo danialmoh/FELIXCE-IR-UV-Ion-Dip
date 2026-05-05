@@ -135,3 +135,8 @@ icon = "📐"
 path = ".streamlit/9.0_ResultsSummary.py"
 name = "9. Results Summary & Export"
 icon = "📋"
+
+[[pages]]
+path = ".streamlit/9.1_LiteratureComparison.py"
+name = "9.1 Literature Comparison"
+icon = "📚"

@@ -73,12 +73,23 @@ from packages.BaselineCorrection import *
 import matplotlib.pyplot as plt
 import plotly.graph_objs as go
 from packages.ReportManager import add_plot_to_report_button, init_report_session
+from packages.load_dataset import ensure_dataset_loaded
 
 init_report_session()
+
+# --- Ensure data is available (show load-from-file UI if not) ---
+ensure_dataset_loaded(
+    require_keys=["x_mass", "compilation_baseline_corrected_data", "unique_wavenumbers"],
+    compute_megasum=False,
+    page_key_prefix="_megasum",
+)
 
 # Import variables
 file_directory = st.session_state.get("file_directory", None)
 compiled_data = st.session_state.get("compiled_data", None)
+if compiled_data is None:
+    # Fallback: use compilation_baseline_corrected_data loaded from pkl.gz
+    compiled_data = st.session_state.get("compilation_baseline_corrected_data", None)
 unique_wavenumbers = st.session_state.get("unique_wavenumbers", None)
 element1 = st.session_state.get("element1", None)
 element2 = st.session_state.get("element2", None)

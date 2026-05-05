@@ -933,8 +933,8 @@ if "rempi_baseline_corrected" in st.session_state:
                 )
                 st.plotly_chart(fig_ridge, use_container_width=True)
 
-                fig_height = max(6, n_traces * 0.8 + 1)
-                fig_mpl_r, ax_r = plt.subplots(figsize=(12, fig_height))
+                fig_height = max(4, n_traces * 0.8 + 1)
+                fig_mpl_r, ax_r = plt.subplots(figsize=(18, fig_height))
                 for idx in range(n_traces):
                     c = colors[idx % len(colors)]
                     offset = idx * _spacing
@@ -959,7 +959,7 @@ if "rempi_baseline_corrected" in st.session_state:
                             _mass_str = "-".join(f"{m:.0f}" for m in _masses[:6])
                             _ts = datetime.datetime.now().strftime("%H%M%S")
                             filepath = output_path / f"REMPI_ridge_plot_m{_mass_str}_{_ts}.png"
-                            fig_mpl_r.savefig(str(filepath), dpi=300, bbox_inches='tight')
+                            fig_mpl_r.savefig(str(filepath), dpi=300, bbox_inches=None, pad_inches=0.2)
                             st.success(f"✅ Saved to `{filepath}`")
                         else:
                             st.warning("No output directory set")

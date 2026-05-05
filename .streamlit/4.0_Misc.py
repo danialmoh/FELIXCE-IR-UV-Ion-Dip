@@ -10,9 +10,11 @@ import os
 import pickle
 import gzip
 import configparser
+from pathlib import Path
 from functools import reduce
 from plotly.subplots import make_subplots
 from packages.ReportManager import add_plot_to_report_button, init_report_session
+from packages.load_dataset import ensure_dataset_loaded
 
 init_report_session()
 
@@ -26,63 +28,11 @@ st.caption(
 # ========================================================================================
 # DATA LOADING & RANGE SELECTION
 # ========================================================================================
-x_mass = st.session_state.get("x_mass")
-compilation_baseline_corrected_data = st.session_state.get("compilation_baseline_corrected_data")
-unique_wavenumbers = st.session_state.get("unique_wavenumbers")
-plot_col_without = st.session_state.get("plot_columnIndex_withoutIR")
-plot_col_with = st.session_state.get("plot_columnIndex_withIR")
-
-# --- Option to load from previously exported file ---
-if x_mass is None or compilation_baseline_corrected_data is None or unique_wavenumbers is None:
-    st.info("No data in session. You can either run Sections 1–2 or load a previously exported dataset below.")
-
-    # Try to get default directory from defaults.ini
-    _default_dir = ""
-    _defaults_file = r'./.streamlit/defaults.ini'
-    if os.path.exists(_defaults_file):
-        _cfg = configparser.ConfigParser()
-        _cfg.read(_defaults_file)
-        try:
-            _default_dir = _cfg.get('Import Data', 'file_directory')
-        except configparser.Error:
-            pass
-
-    _default_path = os.path.join(_default_dir, "baseline_corrected_full_dataset.pkl.gz") if _default_dir else ""
-
-    st.markdown("### 📂 Load Saved Dataset")
-    st.caption(
-        "Load a `baseline_corrected_full_dataset.pkl.gz` file exported from **Section 2.1**. "
-        "This lets you skip steps 1–2 entirely."
-    )
-    load_path = st.text_input(
-        "Path to exported dataset (.pkl.gz)",
-        value=_default_path,
-        key="_misc_load_path",
-        help="Full path to the .pkl.gz file exported by Section 2.1's 'Export full dataset' button.",
-    )
-
-    if st.button("📥 Load Dataset", type="primary"):
-        if not load_path or not os.path.exists(load_path):
-            st.error(f"❌ File not found: `{load_path}`")
-        else:
-            try:
-                with gzip.open(load_path, "rb") as f:
-                    bundle = pickle.load(f)
-
-                st.session_state["x_mass"] = bundle["x_mass"]
-                st.session_state["compilation_baseline_corrected_data"] = bundle["compilation_baseline_corrected_data"]
-                st.session_state["unique_wavenumbers"] = bundle["unique_wavenumbers"]
-                st.session_state["plot_columnIndex_withoutIR"] = bundle.get("plot_columnIndex_withoutIR", -2)
-                st.session_state["plot_columnIndex_withIR"] = bundle.get("plot_columnIndex_withIR", -1)
-
-                n_wn = len(bundle["unique_wavenumbers"])
-                n_mz = len(bundle["x_mass"])
-                st.success(f"✅ Loaded {n_wn} wavenumbers × {n_mz} m/z bins from `{os.path.basename(load_path)}`")
-                st.rerun()
-            except Exception as e:
-                st.error(f"❌ Failed to load: {e}")
-
-    st.stop()
+ensure_dataset_loaded(
+    require_keys=["x_mass", "compilation_baseline_corrected_data", "unique_wavenumbers"],
+    compute_megasum=False,
+    page_key_prefix="_misc",
+)
 
 # Re-read after potential load
 x_mass = st.session_state.get("x_mass")
@@ -94,7 +44,7 @@ plot_col_with = st.session_state.get("plot_columnIndex_withIR")
 st.success(f"✅ Data loaded: {len(unique_wavenumbers)} wavenumber steps, {len(x_mass)} m/z bins")
 
 @st.fragment
-def _misc_analysis_section():
+def _misc_controls_section():
     x_mass = st.session_state.get("x_mass")
     compilation_baseline_corrected_data = st.session_state.get("compilation_baseline_corrected_data")
     unique_wavenumbers = st.session_state.get("unique_wavenumbers")
@@ -123,17 +73,78 @@ def _misc_analysis_section():
             "m/z max", value=float(x_mass.max()), step=1.0, key="_misc_mz_max"
         )
 
-    noise_floor = st.number_input(
-        "Noise floor (baseline signal threshold)",
-        value=0.001, min_value=0.0, step=0.0005, format="%.4f",
-        help="m/z bins where the without-IR signal is below this value are masked out as empty/noise.",
-        key="_misc_noise_floor",
-    )
+    _nf_col1, _nf_col2 = st.columns([3, 1])
+    with _nf_col1:
+        noise_floor = st.number_input(
+            "Noise floor (baseline signal threshold)",
+            value=float(st.session_state.get("_misc_noise_floor_val", 0.001)),
+            min_value=0.0, step=0.0005, format="%.5f",
+            help=(
+                "m/z bins whose mean absolute without-IR signal across all wavenumbers "
+                "falls below this value are masked out as empty/noise channels. "
+                "Lower = keep more channels. Higher = stricter masking. "
+                "Use **Auto-detect** to find this automatically."
+            ),
+        )
+        st.session_state["_misc_noise_floor_val"] = noise_floor
+        if st.session_state.get("_misc_processed", False):
+            _bpm_preview = st.session_state["_misc_baseline_per_mz"]
+            _n_keep = int((_bpm_preview >= noise_floor).sum())
+            _n_total = len(_bpm_preview)
+            st.caption(f"→ {_n_keep}/{_n_total} m/z bins will pass this threshold")
+    with _nf_col2:
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("🔍 Auto-detect", key="_auto_noise_floor",
+                     help=(
+                         "Finds the optimal noise floor automatically using Otsu's method: "
+                         "sweeps 512 candidate thresholds and picks the one that maximally "
+                         "separates the noise cluster from real signal channels. "
+                         "Requires **Process Data** to have been run at least once. "
+                         "Instantly updates the noise floor value and applies the new mask — "
+                         "no need to press Process Data again."
+                     )):
+            if st.session_state.get("_misc_processed", False):
+                _bpm = st.session_state["_misc_baseline_per_mz"]
+                # Log-space Otsu: data spans orders of magnitude,
+                # so we work in log10 where noise/signal are actually bimodal
+                _bpm_pos = _bpm[_bpm > 0]
+                _log_bpm = np.log10(_bpm_pos)
+                _thresholds = np.linspace(_log_bpm.min(), _log_bpm.max(), 1024)
+                _best_log_t, _best_var = _log_bpm.min(), -1.0
+                for _lt in _thresholds:
+                    _below = _log_bpm[_log_bpm < _lt]
+                    _above = _log_bpm[_log_bpm >= _lt]
+                    if len(_below) == 0 or len(_above) == 0:
+                        continue
+                    _var = len(_below) * len(_above) * (_below.mean() - _above.mean()) ** 2
+                    if _var > _best_var:
+                        _best_var, _best_log_t = _var, _lt
+                _best_t = round(float(10 ** _best_log_t), 6)
+                st.session_state["_misc_noise_floor_val"] = _best_t
+                noise_floor = _best_t
+                _n_wn = len(st.session_state["_misc_wn_list"])
+                noise_mask_1d = _bpm >= _best_t
+                st.session_state["_misc_noise_mask_1d"] = noise_mask_1d
+                st.session_state["_misc_noise_mask_2d"] = np.tile(noise_mask_1d, (_n_wn, 1))
+                n_masked = int((~noise_mask_1d).sum())
+                n_total = len(noise_mask_1d)
+                st.success(f"✅ Noise floor auto-set to **{_best_t:.6f}** — {n_total - n_masked}/{n_total} m/z bins kept. Press **📊 Plot / Refresh** to update the plots.")
+            else:
+                st.warning("Run **Process Data** once first, then auto-detect.")
 
     # ========================================================================================
-    # DATA PROCESSING — build matrices once
+    # DATA PROCESSING
     # ========================================================================================
-    if st.button("✨ Process Data", type="primary"):
+    _btn_col1, _btn_col2 = st.columns(2)
+    with _btn_col1:
+        _do_process = st.button("✨ Process Data", type="primary",
+                                help="Rebuild all matrices from scratch using the range & noise floor above. Use after changing wavenumber/m/z ranges.")
+    with _btn_col2:
+        _do_plot = st.button("📊 Plot / Refresh", type="secondary",
+                             disabled=not st.session_state.get("_misc_processed", False),
+                             help="Refresh the plots below with the current session data. Use after Auto-detect or to simply re-render the tabs.")
+
+    if _do_process:
         with st.spinner("Building m/z × wavenumber matrices…"):
             # Filter wavenumbers
             wn_list = sorted([wn for wn in unique_wavenumbers if wn_min <= float(wn) <= wn_max])
@@ -181,9 +192,24 @@ def _misc_analysis_section():
         n_masked = int((~noise_mask_1d).sum())
         st.success(
             f"✅ Processed {n_wn} wavenumbers × {n_mz} m/z bins. "
-            f"Masked {n_masked}/{n_mz} m/z bins below noise floor ({noise_floor:.4f})."
+            f"Masked {n_masked}/{n_mz} m/z bins below noise floor ({noise_floor:.4f}). "
+            f"Press **📊 Plot / Refresh** to update the plots."
         )
 
+    if _do_plot:
+        st.rerun(scope="app")
+    if st.session_state.get("_misc_processed", False):
+        _wl = st.session_state["_misc_wn_list"]
+        _mv = st.session_state["_misc_mz_vals"]
+        _nm = st.session_state["_misc_noise_mask_1d"]
+        st.caption(
+            f"ℹ️ Last processed: {len(_wl)} wavenumbers × {len(_mv)} m/z bins, "
+            f"{int((~_nm).sum())} masked. Change settings above and press **Process Data** to update."
+        )
+
+
+@st.fragment
+def _misc_tabs_section():
     # ========================================================================================
     # ANALYSIS TABS
     # ========================================================================================
@@ -448,6 +474,7 @@ def _misc_analysis_section():
 
         if st.session_state.get("_peaks_detected", False):
             detected_peaks_df = st.session_state["_detected_peaks"]
+            st.caption(f"Debug: DataFrame has {len(detected_peaks_df)} rows, columns: {list(detected_peaks_df.columns)}")
 
             st.dataframe(detected_peaks_df, use_container_width=True, height=300)
 
@@ -465,15 +492,13 @@ def _misc_analysis_section():
                 if st.button("💾 Save Detected Masses to output", key="_sv_peaks_csv"):
                     _save_to_output(detected_peaks_df, _peaks_fname, is_csv=True)
             with _peak_dl2:
-                # Create a comma-separated list for easy copy-paste
-                mass_list_str = ", ".join([f"{m:.1f}" for m in detected_peaks_df["m/z"].values])
-                st.text_area(
-                    "Copy-paste into Tab 3",
-                    value=mass_list_str,
-                    height=100,
-                    key="_mass_list_display",
-                    help="Copy these m/z values and use them as channel centers in Tab 3.",
-                )
+                # Create a comma-separated list for easy copy-paste (sorted ascending)
+                _all_masses = sorted(detected_peaks_df["m/z"].values)
+                mass_list_str = ", ".join([f"{m:.1f}" for m in _all_masses])
+                st.markdown(f"**📋 Copy-paste into Tab 3 ({len(_all_masses)} masses)**")
+                # Use code block for horizontal scrolling (no wrapping)
+                st.code(mass_list_str, language=None)
+                st.caption("Click the copy button (top-right) or select all to copy the full list")
 
     # ========================================================================================
     # TAB 2: ON/OFF-RESONANCE DIFFERENCE MASS SPECTRUM
@@ -1478,4 +1503,5 @@ def _misc_analysis_section():
             if st.button("💾 Save Summary to output", key="_sv_summary_csv"):
                 _save_to_output(summary_df, _sum_fname, is_csv=True)
 
-_misc_analysis_section()
+_misc_controls_section()
+_misc_tabs_section()

@@ -148,6 +148,8 @@ with st.sidebar:
         st.markdown("#### 📋 Results & Export")
         if st.button("📋 9.0 Results Summary & Export", use_container_width=True, key="btn_results_summary"):
             st.switch_page(".streamlit/9.0_ResultsSummary.py")
+        if st.button("📚 9.1 Literature Comparison", use_container_width=True, key="btn_lit_comparison"):
+            st.switch_page(".streamlit/9.1_LiteratureComparison.py")
 
 # Load sections
 nav = get_nav_from_toml(".streamlit/pages_sections.toml")

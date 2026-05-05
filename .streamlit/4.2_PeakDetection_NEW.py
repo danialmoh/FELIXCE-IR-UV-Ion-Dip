@@ -7,6 +7,7 @@ import plotly.graph_objs as go
 import os
 import re
 from packages.ReportManager import add_plot_to_report_button, init_report_session
+from packages.load_dataset import ensure_dataset_loaded
 
 init_report_session()
 
@@ -65,10 +66,20 @@ with st.expander("📂 Step 0: Data Source & Signal Selection", expanded=True):
             MegaSum = st.session_state.get("MegaSum", None)
             x_mass = st.session_state.get("x_mass", None)
             if MegaSum is None or x_mass is None:
-                st.error("❌ No data found in session_state. Please upload a CSV file or run previous sections.")
-                st.stop()
-            else:
+                st.warning("No MegaSum in session. Loading from .pkl.gz file...")
+                ensure_dataset_loaded(
+                    require_keys=["x_mass", "compilation_baseline_corrected_data", "unique_wavenumbers"],
+                    compute_megasum=True,
+                    page_key_prefix="_peakdet",
+                )
+                # After loading, refresh local refs
+                MegaSum = st.session_state.get("MegaSum")
+                x_mass = st.session_state.get("x_mass")
+            if MegaSum is not None and x_mass is not None:
                 st.success(f"✅ Data loaded from session ({len(x_mass)} data points)")
+            else:
+                st.error("❌ Could not load data.")
+                st.stop()
     
     with col2:
         if st.session_state.get("MegaSum") is not None:
@@ -140,10 +151,10 @@ with st.expander("🔍 Step 1: Peak Detection Parameters", expanded=False):
     with col3:
         formula_tol = st.number_input(
             "Formula matching tolerance (Da)",
-            value=st.session_state.get("formula_tol", 1.00),
+            value=st.session_state.get("formula_tol", 0.50),
             step=0.01,
             key="formula_tol",
-            help="Mass tolerance for candidate matching"
+            help="Mass tolerance for candidate matching (0.5 Da recommended for unit-mass resolution)"
         )
     
     st.divider()
@@ -219,9 +230,8 @@ with st.expander("🧪 Step 2: Candidate Formula Matching Options", expanded=Fal
                 "Select CH formula types:",
                 options=[
                     "Alkane (CnH2n+2)",
-                    "Alkene (CnH2n)",
+                    "Alkene/Cyclic (CnH2n)",
                     "Alkyne (CnH2n-2)",
-                    "Cyclic (CnH2n)",
                     "Highly Unsaturated (PAH: CnH2n+2-2u)",
                     NAPH_CH_OPTION,
                     ETHYNYL_OPTION,
@@ -229,6 +239,7 @@ with st.expander("🧪 Step 2: Candidate Formula Matching Options", expanded=Fal
                 default=["Highly Unsaturated (PAH: CnH2n+2-2u)", "Alkane (CnH2n+2)"],
                 key="candidate_options_CH"
             )
+            st.caption("ℹ️ Alkene & Cyclic merged (same mass formula CₙH₂ₙ)")
     
     with col2:
         with st.container(border=True):
@@ -345,48 +356,107 @@ with st.expander("🧪 Step 2: Candidate Formula Matching Options", expanded=Fal
             key="max_Br"
         )
     
-    # Carbon range
-    min_C = 2
-    max_C = 30
+    st.divider()
+    st.markdown("### Carbon Range & Validation Filters")
+    
+    filt_col1, filt_col2, filt_col3, filt_col4 = st.columns(4)
+    with filt_col1:
+        min_C = int(st.number_input("Min carbons", value=2, min_value=1, max_value=50, step=1, key="min_C"))
+        max_C = int(st.number_input("Max carbons", value=30, min_value=min_C, max_value=100, step=1, key="max_C"))
+    with filt_col2:
+        hc_min = st.number_input("Min H/C ratio", value=0.3, min_value=0.0, max_value=5.0, step=0.1, key="hc_min",
+                                  help="Reject candidates with H/C below this (typical hydrocarbons: 0.5–2.5)")
+        hc_max = st.number_input("Max H/C ratio", value=2.5, min_value=hc_min, max_value=5.0, step=0.1, key="hc_max")
+    with filt_col3:
+        rdb_max = st.number_input("Max RDB (Ring+Double Bond)", value=15, min_value=0, max_value=50, step=1, key="rdb_max",
+                                   help="Flag/reject formulas with RDB above this value")
+        check_br_isotope = st.checkbox("Check ⁸¹Br isotopologue (+2 Da)", value=True, key="check_br_isotope",
+                                        help="Also match peaks that could be ⁸¹Br isotopologues")
+        require_br_pair = st.checkbox("Require Br isotope pair", value=True, key="require_br_pair",
+                                       help="Reject CHBr candidates unless both ⁷⁹Br and ⁸¹Br peaks "
+                                            "(±2 Da per Br) are detected. Br has ~50/50 abundance, "
+                                            "so a genuine brominated species must show both peaks.")
+    with filt_col4:
+        rank_by_error = st.checkbox("Rank by mass error", value=True, key="rank_by_error",
+                                     help="Sort candidates by closeness to detected m/z")
+        show_mass_error = st.checkbox("Show mass error (Da)", value=True, key="show_mass_error")
     
     st.divider()
     
-    # Helper functions (same as before)
-    def hydrogen_count(candidate_type, n_C, u=None):
-        if candidate_type == "Alkane (CnH2n+2)":
-            return 2 * n_C + 2
-        elif candidate_type == "Alkene (CnH2n)":
-            return 2 * n_C
-        elif candidate_type == "Alkyne (CnH2n-2)":
-            return 2 * n_C - 2
-        elif candidate_type == "Cyclic (CnH2n)":
-            return 2 * n_C
-        elif candidate_type == "Highly Unsaturated (PAH: CnH2n+2-2u)":
-            if u is None:
-                u = min_u
-            return 2 * n_C + 2 - 2 * u
-        elif candidate_type == NAPH_CH_OPTION:
-            return None
-        elif candidate_type == ETHYNYL_OPTION:
-            return None
-        else:
-            return None
-    
-    def candidate_formulas_CH(target_mz, tol, candidate_types):
-        candidates = []
+    # ==========================================
+    # IMPROVED FORMULA MATCHING ENGINE
+    # ==========================================
+    Br79_mass = 78.9183
+    Br81_mass = 80.9163
+
+    def calc_rdb(n_C, n_H, n_Br=0):
+        """Ring + Double Bond equivalents: (2C + 2 - H - X) / 2"""
+        return (2 * n_C + 2 - n_H - n_Br) / 2.0
+
+    def is_valid_candidate(n_C, n_H, n_Br=0):
+        """Check chemical validity: RDB >= 0, H/C in range, RDB <= max."""
+        if n_H < 1:
+            return False, "H<1"
+        rdb = calc_rdb(n_C, n_H, n_Br)
+        if rdb < 0:
+            return False, "RDB<0"
+        if rdb > rdb_max:
+            return False, f"RDB={rdb:.1f}>{rdb_max}"
+        hc_ratio = n_H / n_C if n_C > 0 else 0
+        if hc_ratio < hc_min or hc_ratio > hc_max:
+            return False, f"H/C={hc_ratio:.2f} out of range"
+        return True, ""
+
+    def make_candidate_entry(formula_str, calc_mass, target_mz, n_C, n_H, n_Br=0, cand_type="", extra=""):
+        """Create a standardized candidate dict with mass error and RDB."""
+        rdb = calc_rdb(n_C, n_H, n_Br)
+        mass_err = calc_mass - target_mz
+        return {
+            "formula": formula_str,
+            "type": cand_type,
+            "calc_mass": calc_mass,
+            "mass_error_Da": mass_err,
+            "RDB": rdb,
+            "H/C": n_H / n_C if n_C > 0 else 0,
+            "n_C": n_C,
+            "n_H": n_H,
+            "n_Br": n_Br,
+            "extra": extra,
+        }
+
+    def generate_candidates_CH(target_mz, tol, candidate_types):
+        """Generate CH-only candidates with validation."""
+        results = []
         for cand_type in candidate_types:
             if cand_type == NAPH_CH_OPTION and min_n_subs is not None:
+                # Alkylated naphthalene: C10H8 base
+                # For n substituents: lose n ring-H, gain sum of (2*chain_i + 1) chain-H
+                # Simplification: n methyl groups of total x carbons
+                # total_C = 10 + x_total, total_H = 8 - n_subs + n_subs*(2*1+1) for methyls
+                # More general: H = 8 - n_subs + (2*x_total + n_subs) = 8 + 2*x_total
+                # CORRECTED: for n_subs substituents with total x_total carbons:
+                # Each substitution: -1 ring H, chain contributes (2*chain_len + 1) H
+                # If all chains are methyl (chain_len=1): H_chain = n_subs * 3
+                # General: H = 8 - n_subs + (2*x_total + n_subs) = 8 + 2*x_total
+                # This is actually correct for linear alkyl chains summing to x_total carbons
                 base_c = 10
                 base_h = 8
                 for n_subs in range(min_n_subs, max_n_subs + 1):
                     for x_total in range(max(n_subs, min_x_total), max_x_total + 1):
                         total_c = base_c + x_total
-                        total_h = base_h + 2 * x_total
+                        # Corrected H count: base_h - n_subs (ring H lost) + (2*x_total + n_subs) (alkyl H)
+                        total_h = base_h - n_subs + (2 * x_total + n_subs)  # = base_h + 2*x_total
                         calc_mass = total_c * 12.0000 + total_h * 1.007825
                         if abs(calc_mass - target_mz) <= tol:
-                            candidates.append(
-                                f"{cand_type}: C{total_c}H{total_h} (n={n_subs}, x={x_total})"
-                            )
+                            valid, reason = is_valid_candidate(total_c, total_h)
+                            if valid:
+                                results.append(make_candidate_entry(
+                                    f"C{total_c}H{total_h}",
+                                    calc_mass, target_mz, total_c, total_h,
+                                    cand_type=cand_type,
+                                    extra=f"n={n_subs}, x={x_total}"
+                                ))
+
             elif cand_type == ETHYNYL_OPTION and min_ethynyl is not None:
                 for m in range(min_ethynyl, max_ethynyl + 1):
                     for u_core in range(min_core_u, max_core_u + 1):
@@ -394,97 +464,202 @@ with st.expander("🧪 Step 2: Candidate Formula Matching Options", expanded=Fal
                             total_c = n_core + 2 * m
                             if total_c > max_C:
                                 break
-                            total_h = 2 * n_core + 2 - 2 * u_core
+                            # Core H + ethynyl terminal H (each C≡CH contributes 1 H)
+                            core_h = 2 * n_core + 2 - 2 * u_core
+                            # Each ethynyl replaces 1 H on core and adds terminal H → net: -1 + 1 = 0
+                            # But actually ethynyl = -C≡CH: removes 1 H from core, adds 1 terminal H
+                            total_h = core_h - m + m  # net zero change... simplify:
+                            total_h = core_h  # ethynyl substitution: -1 core H + 1 terminal H = net 0
                             if total_h < 1:
                                 continue
                             calc_mass = total_c * 12.0000 + total_h * 1.007825
                             if abs(calc_mass - target_mz) <= tol:
-                                candidates.append(
-                                    f"{cand_type}: C{total_c}H{total_h} (core=C{n_core}, u_core={u_core}, {m}×C≡CH)"
-                                )
-            else:
+                                valid, reason = is_valid_candidate(total_c, total_h)
+                                if valid:
+                                    results.append(make_candidate_entry(
+                                        f"C{total_c}H{total_h}",
+                                        calc_mass, target_mz, total_c, total_h,
+                                        cand_type=cand_type,
+                                        extra=f"core=C{n_core}, u_core={u_core}, {m}×C≡CH"
+                                    ))
+
+            elif cand_type == "Highly Unsaturated (PAH: CnH2n+2-2u)":
                 for n_C in range(min_C, max_C + 1):
-                    if cand_type == "Highly Unsaturated (PAH: CnH2n+2-2u)":
-                        for u in range(int(min_u), int(max_u) + 1):
-                            n_H = hydrogen_count(cand_type, n_C, u)
-                            if n_H < 1:
-                                continue
-                            calc_mass = n_C * 12.0000 + n_H * 1.007825
-                            if abs(calc_mass - target_mz) <= tol:
-                                candidates.append(f"{cand_type}: C{n_C}H{n_H} (u={u})")
-                    else:
-                        n_H = hydrogen_count(cand_type, n_C)
-                        if n_H is not None and n_H < 1:
+                    for u in range(int(min_u), int(max_u) + 1):
+                        n_H = 2 * n_C + 2 - 2 * u
+                        if n_H < 1:
                             continue
-                        if n_H is not None:
-                            calc_mass = n_C * 12.0000 + n_H * 1.007825
-                            if abs(calc_mass - target_mz) <= tol:
-                                candidates.append(f"{cand_type}: C{n_C}H{n_H}")
-        return candidates
-    
-    def candidate_formulas_CHBr(target_mz, tol, candidate_types):
-        Br_mass = 78.9183
-        candidates = []
-        for cand_type in candidate_types:
-            if cand_type == "Alkyl Halides (Haloalkanes) (CnH(2n+1)Br)":
-                for n_C in range(1, max_C + 1):
-                    n_H = 2 * n_C + 1
-                    calc_mass = n_C * 12.0000 + n_H * 1.007825 + Br_mass
+                        calc_mass = n_C * 12.0000 + n_H * 1.007825
+                        if abs(calc_mass - target_mz) <= tol:
+                            valid, reason = is_valid_candidate(n_C, n_H)
+                            if valid:
+                                results.append(make_candidate_entry(
+                                    f"C{n_C}H{n_H}",
+                                    calc_mass, target_mz, n_C, n_H,
+                                    cand_type=cand_type,
+                                    extra=f"u={u}"
+                                ))
+
+            elif cand_type == "Alkane (CnH2n+2)":
+                for n_C in range(min_C, max_C + 1):
+                    n_H = 2 * n_C + 2
+                    calc_mass = n_C * 12.0000 + n_H * 1.007825
                     if abs(calc_mass - target_mz) <= tol:
-                        candidates.append(f"{cand_type}: C{n_C}H{n_H}Br")
-            elif cand_type == "Alkenyl Halides (Haloalkenes) (CnH(2n-1)Br)":
-                for n_C in range(2, max_C + 1):
-                    n_H = 2 * n_C - 1
-                    calc_mass = n_C * 12.0000 + n_H * 1.007825 + Br_mass
+                        valid, reason = is_valid_candidate(n_C, n_H)
+                        if valid:
+                            results.append(make_candidate_entry(
+                                f"C{n_C}H{n_H}", calc_mass, target_mz, n_C, n_H,
+                                cand_type=cand_type
+                            ))
+
+            elif cand_type == "Alkene/Cyclic (CnH2n)":
+                for n_C in range(min_C, max_C + 1):
+                    n_H = 2 * n_C
+                    calc_mass = n_C * 12.0000 + n_H * 1.007825
                     if abs(calc_mass - target_mz) <= tol:
-                        candidates.append(f"{cand_type}: C{n_C}H{n_H}Br")
-            elif cand_type == "Alkynyl Halides (Haloalkynes) (CnH(2n-3)Br)":
-                for n_C in range(2, max_C + 1):
-                    n_H = 2 * n_C - 3
+                        valid, reason = is_valid_candidate(n_C, n_H)
+                        if valid:
+                            results.append(make_candidate_entry(
+                                f"C{n_C}H{n_H}", calc_mass, target_mz, n_C, n_H,
+                                cand_type=cand_type
+                            ))
+
+            elif cand_type == "Alkyne (CnH2n-2)":
+                for n_C in range(min_C, max_C + 1):
+                    n_H = 2 * n_C - 2
                     if n_H < 1:
                         continue
-                    calc_mass = n_C * 12.0000 + n_H * 1.007825 + Br_mass
+                    calc_mass = n_C * 12.0000 + n_H * 1.007825
                     if abs(calc_mass - target_mz) <= tol:
-                        candidates.append(f"{cand_type}: C{n_C}H{n_H}Br")
-            elif cand_type == "Polybrominated Alkanes (CnH(2n+2-x)Brx)":
-                for k in range(2, max_Br + 1):
+                        valid, reason = is_valid_candidate(n_C, n_H)
+                        if valid:
+                            results.append(make_candidate_entry(
+                                f"C{n_C}H{n_H}", calc_mass, target_mz, n_C, n_H,
+                                cand_type=cand_type
+                            ))
+
+        return results
+
+    def generate_candidates_CHBr(target_mz, tol, candidate_types):
+        """Generate CHBr candidates checking both ⁷⁹Br and ⁸¹Br isotopologues."""
+        results = []
+
+        # Determine which Br masses to check
+        br_masses = [(Br79_mass, "⁷⁹Br")]
+        if check_br_isotope:
+            br_masses.append((Br81_mass, "⁸¹Br"))
+
+        for cand_type in candidate_types:
+            for br_m, br_label in br_masses:
+                if cand_type == "Alkyl Halides (Haloalkanes) (CnH(2n+1)Br)":
                     for n_C in range(1, max_C + 1):
-                        n_H = 2 * n_C + 2 - k
-                        if n_H < 1:
-                            continue
-                        calc_mass = n_C * 12.0000 + n_H * 1.007825 + k * Br_mass
+                        n_H = 2 * n_C + 1
+                        calc_mass = n_C * 12.0000 + n_H * 1.007825 + br_m
                         if abs(calc_mass - target_mz) <= tol:
-                            candidates.append(f"{cand_type} (Br{k}): C{n_C}H{n_H}Br{k}")
-            elif cand_type == "Polybrominated Alkenes (CnH(2n-x)Brx)":
-                for k in range(2, max_Br + 1):
+                            valid, reason = is_valid_candidate(n_C, n_H, 1)
+                            if valid:
+                                results.append(make_candidate_entry(
+                                    f"C{n_C}H{n_H}Br", calc_mass, target_mz, n_C, n_H, 1,
+                                    cand_type=cand_type, extra=br_label
+                                ))
+
+                elif cand_type == "Alkenyl Halides (Haloalkenes) (CnH(2n-1)Br)":
                     for n_C in range(2, max_C + 1):
-                        n_H = 2 * n_C - k
-                        if n_H < 1:
-                            continue
-                        calc_mass = n_C * 12.0000 + n_H * 1.007825 + k * Br_mass
+                        n_H = 2 * n_C - 1
+                        calc_mass = n_C * 12.0000 + n_H * 1.007825 + br_m
                         if abs(calc_mass - target_mz) <= tol:
-                            candidates.append(f"{cand_type} (Br{k}): C{n_C}H{n_H}Br{k}")
-            elif cand_type == "Polybrominated Alkynes (CnH(2n-2-x)Brx)":
-                for k in range(2, max_Br + 1):
+                            valid, reason = is_valid_candidate(n_C, n_H, 1)
+                            if valid:
+                                results.append(make_candidate_entry(
+                                    f"C{n_C}H{n_H}Br", calc_mass, target_mz, n_C, n_H, 1,
+                                    cand_type=cand_type, extra=br_label
+                                ))
+
+                elif cand_type == "Alkynyl Halides (Haloalkynes) (CnH(2n-3)Br)":
                     for n_C in range(2, max_C + 1):
-                        n_H = 2 * n_C - 2 - k
+                        n_H = 2 * n_C - 3
                         if n_H < 1:
                             continue
-                        calc_mass = n_C * 12.0000 + n_H * 1.007825 + k * Br_mass
+                        calc_mass = n_C * 12.0000 + n_H * 1.007825 + br_m
                         if abs(calc_mass - target_mz) <= tol:
-                            candidates.append(f"{cand_type} (Br{k}): C{n_C}H{n_H}Br{k}")
-            elif cand_type == "Highly Unsaturated (PAH: CnH2n+2-2u)":
-                for k in range(1, max_Br + 1):
-                    for n_C in range(min_C, max_C + 1):
-                        for u in range(int(min_u), int(max_u) + 1):
-                            n_H = hydrogen_count(cand_type, n_C, u) - k
+                            valid, reason = is_valid_candidate(n_C, n_H, 1)
+                            if valid:
+                                results.append(make_candidate_entry(
+                                    f"C{n_C}H{n_H}Br", calc_mass, target_mz, n_C, n_H, 1,
+                                    cand_type=cand_type, extra=br_label
+                                ))
+
+                elif cand_type == "Polybrominated Alkanes (CnH(2n+2-x)Brx)":
+                    for k in range(2, max_Br + 1):
+                        for n_C in range(1, max_C + 1):
+                            n_H = 2 * n_C + 2 - k
                             if n_H < 1:
                                 continue
-                            calc_mass = n_C * 12.0000 + n_H * 1.007825 + k * Br_mass
+                            calc_mass = n_C * 12.0000 + n_H * 1.007825 + k * br_m
                             if abs(calc_mass - target_mz) <= tol:
-                                candidates.append(f"{cand_type} (Br{k}): C{n_C}H{n_H}Br{k} (u={u})")
-        return candidates
-    
+                                valid, reason = is_valid_candidate(n_C, n_H, k)
+                                if valid:
+                                    results.append(make_candidate_entry(
+                                        f"C{n_C}H{n_H}Br{k}", calc_mass, target_mz, n_C, n_H, k,
+                                        cand_type=cand_type, extra=f"Br{k} {br_label}"
+                                    ))
+
+                elif cand_type == "Polybrominated Alkenes (CnH(2n-x)Brx)":
+                    for k in range(2, max_Br + 1):
+                        for n_C in range(2, max_C + 1):
+                            n_H = 2 * n_C - k
+                            if n_H < 1:
+                                continue
+                            calc_mass = n_C * 12.0000 + n_H * 1.007825 + k * br_m
+                            if abs(calc_mass - target_mz) <= tol:
+                                valid, reason = is_valid_candidate(n_C, n_H, k)
+                                if valid:
+                                    results.append(make_candidate_entry(
+                                        f"C{n_C}H{n_H}Br{k}", calc_mass, target_mz, n_C, n_H, k,
+                                        cand_type=cand_type, extra=f"Br{k} {br_label}"
+                                    ))
+
+                elif cand_type == "Polybrominated Alkynes (CnH(2n-2-x)Brx)":
+                    for k in range(2, max_Br + 1):
+                        for n_C in range(2, max_C + 1):
+                            n_H = 2 * n_C - 2 - k
+                            if n_H < 1:
+                                continue
+                            calc_mass = n_C * 12.0000 + n_H * 1.007825 + k * br_m
+                            if abs(calc_mass - target_mz) <= tol:
+                                valid, reason = is_valid_candidate(n_C, n_H, k)
+                                if valid:
+                                    results.append(make_candidate_entry(
+                                        f"C{n_C}H{n_H}Br{k}", calc_mass, target_mz, n_C, n_H, k,
+                                        cand_type=cand_type, extra=f"Br{k} {br_label}"
+                                    ))
+
+                elif cand_type == "Highly Unsaturated (PAH: CnH2n+2-2u)":
+                    for k in range(1, max_Br + 1):
+                        for n_C in range(min_C, max_C + 1):
+                            for u in range(int(min_u), int(max_u) + 1):
+                                n_H = 2 * n_C + 2 - 2 * u - k
+                                if n_H < 1:
+                                    continue
+                                calc_mass = n_C * 12.0000 + n_H * 1.007825 + k * br_m
+                                if abs(calc_mass - target_mz) <= tol:
+                                    valid, reason = is_valid_candidate(n_C, n_H, k)
+                                    if valid:
+                                        results.append(make_candidate_entry(
+                                            f"C{n_C}H{n_H}Br{k}", calc_mass, target_mz, n_C, n_H, k,
+                                            cand_type=cand_type, extra=f"u={u}, Br{k} {br_label}"
+                                        ))
+        return results
+
+    def deduplicate_candidates(candidates):
+        """Remove duplicate formulas, keeping the one with smallest mass error."""
+        seen = {}
+        for c in candidates:
+            key = c["formula"]
+            if key not in seen or abs(c["mass_error_Da"]) < abs(seen[key]["mass_error_Da"]):
+                seen[key] = c
+        return list(seen.values())
+
     if st.button("🧬 Run Candidate Formula Matching", use_container_width=True, type="primary"):
         if "detected_mz" not in st.session_state:
             st.error("❌ No detected peaks found. Please run peak detection first.")
@@ -492,29 +667,119 @@ with st.expander("🧪 Step 2: Candidate Formula Matching Options", expanded=Fal
             detected_mz = st.session_state["detected_mz"]
             
             with st.spinner(f"Matching formulas for {len(detected_mz)} peaks..."):
-                candidate_data = []
+                all_rows = []
                 for mz_val in detected_mz:
-                    ch_candidates = candidate_formulas_CH(mz_val, tol=formula_tol, candidate_types=candidate_options_CH)
-                    chbr_candidates = candidate_formulas_CHBr(mz_val, tol=formula_tol, candidate_types=candidate_options_CHBr)
-                    
-                    if ch_candidates or chbr_candidates:
-                        candidate_data.append({
-                            "m/z": mz_val,
-                            "CH candidates": "; ".join(ch_candidates) if ch_candidates else "",
-                            "CHBr candidates": "; ".join(chbr_candidates) if chbr_candidates else ""
-                        })
+                    ch_raw = generate_candidates_CH(mz_val, tol=formula_tol, candidate_types=candidate_options_CH)
+                    chbr_raw = generate_candidates_CHBr(mz_val, tol=formula_tol, candidate_types=candidate_options_CHBr)
+
+                    # Deduplicate each group
+                    ch_cands = deduplicate_candidates(ch_raw)
+                    chbr_cands = deduplicate_candidates(chbr_raw)
+
+                    # Br isotope pair validation: for each CHBr candidate,
+                    # check that the complementary isotopologue peak exists
+                    # in the detected peak list (±2*n_Br Da).
+                    if require_br_pair and chbr_cands:
+                        _validated_chbr = []
+                        _detected_set = np.array(detected_mz)
+                        for c in chbr_cands:
+                            n_br = c["n_Br"]
+                            _shift = 2.0 * n_br  # mass diff between all-⁷⁹Br and all-⁸¹Br
+                            # Check: does a detected peak exist at mz ± shift?
+                            _has_partner = False
+                            for _delta in [+_shift, -_shift]:
+                                _partner_mz = mz_val + _delta
+                                if np.any(np.abs(_detected_set - _partner_mz) <= formula_tol):
+                                    _has_partner = True
+                                    break
+                            if _has_partner:
+                                _validated_chbr.append(c)
+                            else:
+                                c["extra"] = (c["extra"] + ", " if c["extra"] else "") + "⚠️ no isotope pair"
+                                _validated_chbr.append(c)  # keep but flag
+                        # Separate validated from flagged
+                        _clean = [c for c in _validated_chbr if "⚠️ no isotope pair" not in c.get("extra", "")]
+                        _flagged = [c for c in _validated_chbr if "⚠️ no isotope pair" in c.get("extra", "")]
+                        chbr_cands = _clean  # only keep validated ones
+                        if _flagged:
+                            # Store flagged for optional display
+                            chbr_cands_flagged = _flagged
+                        else:
+                            chbr_cands_flagged = []
+                    else:
+                        chbr_cands_flagged = []
+
+                    # Rank by mass error if requested
+                    if rank_by_error:
+                        ch_cands.sort(key=lambda x: abs(x["mass_error_Da"]))
+                        chbr_cands.sort(key=lambda x: abs(x["mass_error_Da"]))
+
+                    # Format for display
+                    def _fmt(c):
+                        s = f"{c['formula']}"
+                        if c["extra"]:
+                            s += f" ({c['extra']})"
+                        if show_mass_error:
+                            s += f" [Δ={c['mass_error_Da']:+.3f}Da, RDB={c['RDB']:.1f}]"
+                        return s
+
+                    ch_str = "; ".join(_fmt(c) for c in ch_cands)
+                    chbr_str = "; ".join(_fmt(c) for c in chbr_cands)
+                    chbr_flagged_str = "; ".join(_fmt(c) for c in chbr_cands_flagged) if chbr_cands_flagged else ""
+
+                    if ch_cands or chbr_cands:
+                        row = {"m/z": mz_val}
+                        if show_mass_error:
+                            # Best match info
+                            best = min(ch_cands + chbr_cands, key=lambda x: abs(x["mass_error_Da"]))
+                            row["Best Match"] = best["formula"]
+                            row["Error (Da)"] = f"{best['mass_error_Da']:+.4f}"
+                            row["RDB"] = f"{best['RDB']:.1f}"
+                            row["H/C"] = f"{best['H/C']:.2f}"
+                        row["CH candidates"] = ch_str
+                        row["CHBr candidates"] = chbr_str
+                        if chbr_flagged_str:
+                            row["CHBr rejected (no isotope pair)"] = chbr_flagged_str
+                        row["# candidates"] = len(ch_cands) + len(chbr_cands)
+                        all_rows.append(row)
                 
-                if candidate_data:
-                    candidates_df = pd.DataFrame(candidate_data)
-                    st.success(f"✅ Found candidates for {len(candidates_df)} peaks!")
+                if all_rows:
+                    candidates_df = pd.DataFrame(all_rows)
+                    st.success(f"✅ Found candidates for {len(candidates_df)} peaks "
+                               f"({candidates_df['# candidates'].sum()} total formulas)")
                     st.dataframe(candidates_df, use_container_width=True)
                     st.session_state["candidates_df"] = candidates_df
                     
-                    csv_candidates = candidates_df.to_csv(index=False).encode("utf-8")
+                    # Build metadata header with search parameters
+                    _meta_lines = []
+                    _meta_lines.append(f"# Peak Detection & Formula Matching Results")
+                    _meta_lines.append(f"# Signal: {st.session_state.get('signal_label', 'N/A')}")
+                    _meta_lines.append(f"# Peak prominence: {min_prominence}")
+                    _meta_lines.append(f"# Peak distance: {min_distance}")
+                    _meta_lines.append(f"# Formula tolerance: {formula_tol} Da")
+                    _meta_lines.append(f"# CH types: {', '.join(candidate_options_CH) if candidate_options_CH else 'None'}")
+                    _meta_lines.append(f"# CHBr types: {', '.join(candidate_options_CHBr) if candidate_options_CHBr else 'None'}")
+                    if min_u is not None:
+                        _meta_lines.append(f"# Unsaturation range: u={min_u}-{max_u}")
+                    _meta_lines.append(f"# Max Br: {max_Br}")
+                    _meta_lines.append(f"# C range: {min_C}-{max_C}")
+                    _meta_lines.append(f"# H/C filter: {hc_min}-{hc_max}")
+                    _meta_lines.append(f"# Max RDB: {rdb_max}")
+                    _meta_lines.append(f"# Br isotope check: {check_br_isotope}")
+                    _meta_lines.append(f"# Peaks with candidates: {len(candidates_df)}")
+                    _meta_lines.append(f"# Total candidate formulas: {candidates_df['# candidates'].sum()}")
+                    _meta_lines.append(f"#")
+
+                    _header = "\n".join(_meta_lines) + "\n"
+                    csv_candidates = (_header + candidates_df.to_csv(index=False)).encode("utf-8")
+
+                    # Informative filename
+                    _fname = f"candidate_formulas_prom{min_prominence:.3f}_tol{formula_tol:.2f}_dist{min_distance}.csv"
+
                     st.download_button(
                         label="📥 Download Candidate Formulas CSV",
                         data=csv_candidates,
-                        file_name="candidate_formulas.csv",
+                        file_name=_fname,
                         mime="text/csv"
                     )
                 else:
