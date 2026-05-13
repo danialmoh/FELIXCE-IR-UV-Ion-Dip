@@ -140,3 +140,8 @@ icon = "📋"
 path = ".streamlit/9.1_LiteratureComparison.py"
 name = "9.1 Literature Comparison"
 icon = "📚"
+
+[[pages]]
+path = ".streamlit/10.0_MassIdentity.py"
+name = "10. Mass Identity Workbench"
+icon = "🧪"

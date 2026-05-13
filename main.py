@@ -150,6 +150,11 @@ with st.sidebar:
             st.switch_page(".streamlit/9.0_ResultsSummary.py")
         if st.button("📚 9.1 Literature Comparison", use_container_width=True, key="btn_lit_comparison"):
             st.switch_page(".streamlit/9.1_LiteratureComparison.py")
+    #section 10: 
+    with st.container(border=True):
+        st.markdown("#### 🧪 Mass Identity Workbench")
+        if st.button("🧪 10.0 Mass Identity Workbench", use_container_width=True, key="btn_mass_identity"):
+            st.switch_page(".streamlit/10.0_MassIdentity.py")
 
 # Load sections
 nav = get_nav_from_toml(".streamlit/pages_sections.toml")
