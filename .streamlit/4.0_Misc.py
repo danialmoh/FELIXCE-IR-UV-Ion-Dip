@@ -354,23 +354,95 @@ def _misc_tabs_section():
         plt.close(fig_hm_static)
 
         # 1D IR response profile
-        st.markdown("#### IR Response Profile (mean |ΔI| per m/z)")
+        st.markdown("#### IR Response Profile")
         st.caption(
-            "Shows which m/z channels have the largest average response to IR. "
-            "Helps identify the parent ion and fragment channels."
+            "Identify which m/z channels have real IR transitions. "
+            "**Regional signed ΔI** is best: real absorption gives consistently positive ΔI "
+            "that adds up; noise cancels itself out."
         )
-        mean_abs_delta = np.nanmean(np.abs(mat_delta[:, noise_mask_1d]), axis=0)
+        _pr_metric = st.radio(
+            "Profile metric",
+            options=["Regional signed ΔI (recommended)", "Mean |ΔI| (all wavenumbers)",
+                     "Max SNR"],
+            horizontal=True, key="_hm_pr_metric",
+            help=("**Regional signed ΔI**: integrates depletion over a chosen wavenumber window — "
+                  "real absorption adds up coherently, noise cancels. "
+                  "**Mean |ΔI|**: raw signal change across all wavenumbers (biased by signal strength). "
+                  "**Max SNR**: peak signal-to-noise — identifies statistically significant points."),
+        )
+
         mz_active = mz_vals[noise_mask_1d]
+        _mat_delta_active = mat_delta[:, noise_mask_1d]
+        _mat_without_active = mat_without[:, noise_mask_1d]
+        _wn_arr = np.array(wn_list, dtype=float)
+
+        # Regional wavenumber range selector
+        if _pr_metric == "Regional signed ΔI (recommended)":
+            _rc1, _rc2 = st.columns(2)
+            with _rc1:
+                _region_lo = st.number_input(
+                    "Region start (cm⁻¹)", value=float(_wn_arr.min()),
+                    min_value=float(_wn_arr.min()), max_value=float(_wn_arr.max()),
+                    step=50.0, key="_pr_region_lo",
+                )
+            with _rc2:
+                _region_hi = st.number_input(
+                    "Region end (cm⁻¹)", value=float(_wn_arr.max()),
+                    min_value=float(_wn_arr.min()), max_value=float(_wn_arr.max()),
+                    step=50.0, key="_pr_region_hi",
+                )
+            # Mask to selected region
+            _region_mask = (_wn_arr >= _region_lo) & (_wn_arr <= _region_hi)
+            _n_region = int(_region_mask.sum())
+            if _n_region < 2:
+                st.warning("⚠️ Region too narrow — select a wider range.")
+                _pr_values = np.zeros(len(mz_active))
+            else:
+                # Signed sum of ΔI in region (positive = depletion, noise cancels)
+                _regional_delta = _mat_delta_active[_region_mask, :]
+                _regional_without = _mat_without_active[_region_mask, :]
+                # Normalize by baseline to get fractional depletion that adds coherently
+                _baseline_per_ch = np.nanmean(np.abs(_regional_without), axis=0)
+                _signed_integral = np.nansum(_regional_delta, axis=0)
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    _pr_values = np.where(_baseline_per_ch > 1e-10,
+                                          _signed_integral / (_baseline_per_ch * _n_region),
+                                          0.0)
+                st.caption(f"Region: {_region_lo:.0f}–{_region_hi:.0f} cm⁻¹ ({_n_region} points). "
+                           f"Positive = net depletion (real IR). Near zero = noise.")
+            _pr_ylabel = "Regional fractional depletion"
+            _pr_color = "darkorange"
+        elif _pr_metric == "Mean |ΔI| (all wavenumbers)":
+            _pr_values = np.nanmean(np.abs(_mat_delta_active), axis=0)
+            _pr_ylabel = "Mean |ΔI|"
+            _pr_color = "steelblue"
+        else:  # Max SNR
+            _pr_values = np.zeros(int(noise_mask_1d.sum()))
+            for _mi in range(len(_pr_values)):
+                _di = _mat_delta_active[:, _mi]
+                _diff = np.diff(_di)
+                _mad = np.median(np.abs(_diff - np.median(_diff)))
+                _sigma = _mad / 0.6745 if _mad > 0 else 1e-10
+                _pr_values[_mi] = np.nanmax(np.abs(_di)) / _sigma
+            _pr_ylabel = "Max |SNR|"
+            _pr_color = "forestgreen"
 
         fig_profile = go.Figure()
         fig_profile.add_trace(go.Bar(
-            x=mz_active, y=mean_abs_delta,
-            marker_color="steelblue",
+            x=mz_active, y=_pr_values,
+            marker_color=_pr_color,
         ))
+        # Add threshold line for SNR mode
+        if _pr_metric == "Max SNR":
+            fig_profile.add_hline(y=3, line=dict(color="red", dash="dash", width=1),
+                                  annotation_text="SNR=3 threshold",
+                                  annotation_position="top left")
+        if _pr_metric == "Regional signed ΔI (recommended)":
+            fig_profile.add_hline(y=0, line=dict(color="grey", width=0.5))
         fig_profile.update_layout(
             xaxis_title="m/z",
-            yaxis_title="Mean |ΔI|",
-            title="IR Response Profile",
+            yaxis_title=_pr_ylabel,
+            title=f"IR Response Profile — {_pr_metric}",
             height=350,
         )
         st.plotly_chart(fig_profile, use_container_width=True)
@@ -380,10 +452,14 @@ def _misc_tabs_section():
         with _pr_dl1:
             _buf_pr = io.BytesIO()
             fig_pr_static, ax_pr = plt.subplots(figsize=(12, 4))
-            ax_pr.bar(mz_active, mean_abs_delta, color="steelblue", width=np.mean(np.diff(mz_active)) * 0.8 if len(mz_active) > 1 else 1.0)
+            ax_pr.bar(mz_active, _pr_values, color=_pr_color,
+                      width=np.mean(np.diff(mz_active)) * 0.8 if len(mz_active) > 1 else 1.0)
+            if _pr_metric == "Max SNR":
+                ax_pr.axhline(3, color="red", ls="--", lw=1, label="SNR=3")
+                ax_pr.legend(fontsize=9)
             ax_pr.set_xlabel("m/z", fontsize=12)
-            ax_pr.set_ylabel("Mean |ΔI|", fontsize=12)
-            ax_pr.set_title("IR Response Profile", fontsize=13, fontweight="bold")
+            ax_pr.set_ylabel(_pr_ylabel, fontsize=12)
+            ax_pr.set_title(f"IR Response Profile — {_pr_metric}", fontsize=13, fontweight="bold")
             ax_pr.grid(True, alpha=0.3)
             fig_pr_static.tight_layout()
             fig_pr_static.savefig(_buf_pr, format="png", dpi=300, bbox_inches="tight")
@@ -396,7 +472,7 @@ def _misc_tabs_section():
             if st.button("💾 Save IR Profile PNG to output", key="_sv_pr_png"):
                 _save_to_output(_buf_pr, _pr_fname)
         with _pr_dl2:
-            _csv_pr = pd.DataFrame({"m/z": mz_active, "mean_abs_DeltaI": mean_abs_delta})
+            _csv_pr = pd.DataFrame({"m/z": mz_active, _pr_ylabel: _pr_values})
             _pr_csv_fname = f"IR_response_profile_{_wn_tag}_{_mz_tag}.csv"
             st.download_button(
                 "⬇️ Download IR Profile (CSV)", data=_csv_pr.to_csv(index=False),
@@ -406,7 +482,7 @@ def _misc_tabs_section():
                 _save_to_output(_csv_pr, _pr_csv_fname, is_csv=True)
         add_plot_to_report_button(
             fig_pr_static, "IR Response Profile", key_suffix="ir_profile",
-            description="Mean |ΔI| per m/z showing IR-active channels",
+            description=f"IR response profile ({_pr_metric}) per m/z",
         )
         plt.close(fig_pr_static)
 
@@ -417,12 +493,15 @@ def _misc_tabs_section():
             "Use these as starting points for Tab 3 (Mass-Channel IR Spectra)."
         )
 
+        # Use the currently selected profile metric for peak detection
+        _detect_values = _pr_values
+
         with st.form("peak_detection_form"):
             pcol1, pcol2 = st.columns(2)
             with pcol1:
                 peak_prominence = st.number_input(
                     "Minimum prominence (a.u.)",
-                    value=np.nanmax(mean_abs_delta) * 0.1 if len(mean_abs_delta) > 0 else 0.001,
+                    value=float(np.nanmax(_detect_values) * 0.1) if len(_detect_values) > 0 else 0.001,
                     min_value=0.0,
                     step=0.001,
                     format="%.4f",
@@ -451,7 +530,7 @@ def _misc_tabs_section():
 
             # Find peaks
             peak_indices, peak_properties = find_peaks(
-                mean_abs_delta,
+                _detect_values,
                 prominence=peak_prominence,
                 distance=min_distance_idx,
             )
@@ -459,10 +538,10 @@ def _misc_tabs_section():
             if len(peak_indices) > 0:
                 detected_peaks_df = pd.DataFrame({
                     "m/z": mz_active[peak_indices],
-                    "Mean |ΔI|": mean_abs_delta[peak_indices],
+                    _pr_ylabel: _detect_values[peak_indices],
                     "Prominence": peak_properties["prominences"],
                 })
-                detected_peaks_df = detected_peaks_df.sort_values("Mean |ΔI|", ascending=False)
+                detected_peaks_df = detected_peaks_df.sort_values(_pr_ylabel, ascending=False)
                 detected_peaks_df.reset_index(drop=True, inplace=True)
 
                 st.session_state["_detected_peaks"] = detected_peaks_df
@@ -816,7 +895,8 @@ def _misc_tabs_section():
                     with scol1:
                         plot_mode = st.radio(
                             "Y-axis quantity",
-                            options=["-ln(depletion)", "ΔI (without − with)", "Integrated signal (both)"],
+                            options=["-ln(depletion)", "ΔI (without − with)",
+                                     "Fractional depletion (ΔI/I)", "Integrated signal (both)"],
                             horizontal=True, key="_frag_plot_mode",
                         )
                     with scol2:
@@ -832,12 +912,25 @@ def _misc_tabs_section():
                             help="Removes negative baseline dips from IR spectra.",
                             key="_frag_clip_negative",
                         )
+                        show_snr = st.checkbox(
+                            "Show SNR overlay",
+                            value=False,
+                            help="Overlay per-point signal-to-noise ratio. SNR > 3 indicates likely real absorption.",
+                            key="_frag_show_snr",
+                        )
                     with scol4:
                         view_mode = st.radio(
                             "View mode",
                             options=["Overlay", "Ridge Plot", "3D Waterfall"],
                             index=0, key="_frag_view_mode",
                             help="Ridge Plot: stacked 2D traces. 3D Waterfall: interactive 3D view with lines and markers.",
+                        )
+                        min_peak_width_cm = st.number_input(
+                            "Min peak width (cm⁻¹)",
+                            value=0, min_value=0, max_value=100, step=5,
+                            key="_frag_min_peak_width",
+                            help="Filter out peaks narrower than this. FELIX bandwidth ~0.5-1% of ν "
+                                 "(i.e. ~7 cm⁻¹ at 1000 cm⁻¹). Set 0 to disable.",
                         )
 
                     plot_submitted = st.form_submit_button("📊 Update Plot")
@@ -848,12 +941,16 @@ def _misc_tabs_section():
                     st.session_state["_smooth_window"] = smooth_window
                     st.session_state["_clip_negative"] = clip_negative
                     st.session_state["_view_mode"] = view_mode
+                    st.session_state["_show_snr"] = show_snr
+                    st.session_state["_min_peak_width_cm"] = min_peak_width_cm
 
                 # Use stored settings if available, otherwise use form defaults
                 plot_mode = st.session_state.get("_plot_mode", plot_mode)
                 smooth_window = st.session_state.get("_smooth_window", smooth_window)
                 clip_negative = st.session_state.get("_clip_negative", clip_negative)
                 view_mode = st.session_state.get("_view_mode", view_mode)
+                show_snr = st.session_state.get("_show_snr", show_snr)
+                min_peak_width_cm = st.session_state.get("_min_peak_width_cm", min_peak_width_cm)
 
                 # Expanded color palette for up to 25 channels
                 colors = [
@@ -873,6 +970,38 @@ def _misc_tabs_section():
                         y_processed = np.clip(y_processed, 0, None)
                     return y_processed
 
+                def compute_snr(delta_i):
+                    """Compute per-point SNR using MAD of first-difference as noise estimate."""
+                    diff = np.diff(delta_i)
+                    mad = np.median(np.abs(diff - np.median(diff)))
+                    sigma = mad / 0.6745 if mad > 0 else 1e-10
+                    return delta_i / sigma
+
+                def filter_narrow_peaks(wn, y, min_width_cm):
+                    """Zero out peaks narrower than min_width_cm (noise spikes)."""
+                    if min_width_cm <= 0:
+                        return y
+                    y_filtered = y.copy()
+                    # Estimate average wavenumber step
+                    wn_step = np.abs(np.median(np.diff(wn)))
+                    if wn_step == 0:
+                        return y
+                    min_pts = max(2, int(min_width_cm / wn_step))
+                    # Find peaks and check their widths
+                    peaks, properties = find_peaks(np.nan_to_num(y, nan=0),
+                                                   prominence=0.01 * np.nanmax(np.abs(y)),
+                                                   width=0)
+                    if len(peaks) > 0:
+                        widths = properties.get("widths", np.zeros(len(peaks)))
+                        for pi, pw in zip(peaks, widths):
+                            if pw < min_pts:
+                                # Zero out a small window around the narrow spike
+                                hw = max(1, int(pw))
+                                lo = max(0, pi - hw)
+                                hi = min(len(y_filtered), pi + hw + 1)
+                                y_filtered[lo:hi] = 0.0
+                    return y_filtered
+
                 # Helper: get y data for a channel based on plot_mode
                 # Returns (y,) for single-trace modes, (y_without, y_with) for "Integrated signal (both)"
                 def get_y_data(data, mode):
@@ -880,6 +1009,12 @@ def _misc_tabs_section():
                         return (apply_smooth(data["ln_depletion"], smooth_window, clip_negative),)
                     elif mode == "ΔI (without − with)":
                         return (apply_smooth(data["delta_i"], smooth_window, clip_negative),)
+                    elif mode == "Fractional depletion (ΔI/I)":
+                        with np.errstate(divide='ignore', invalid='ignore'):
+                            frac = data["delta_i"] / np.where(
+                                np.abs(data["int_without"]) > 1e-10,
+                                data["int_without"], np.nan)
+                        return (apply_smooth(np.nan_to_num(frac, nan=0.0), smooth_window, clip_negative),)
                     else:
                         return (
                             apply_smooth(data["int_without"], smooth_window, clip_negative),
@@ -891,39 +1026,40 @@ def _misc_tabs_section():
                     y_title = "-ln(depletion)"
                 elif plot_mode == "ΔI (without − with)":
                     y_title = "ΔI (a.u.)"
+                elif plot_mode == "Fractional depletion (ΔI/I)":
+                    y_title = "ΔI / I(without)"
                 else:
                     y_title = "Integrated signal (a.u.)"
 
                 if view_mode == "Overlay":
-                    # ---- OVERLAY MODE (original) ----
+                    # ---- OVERLAY MODE ----
                     fig_frag = go.Figure()
+                    _snr_data = {}  # for SNR subplot
                     for idx, (label, data) in enumerate(frag_results.items()):
                         c = colors[idx % len(colors)]
-                        if plot_mode == "-ln(depletion)":
-                            y_smooth = apply_smooth(data["ln_depletion"], smooth_window, clip_negative)
+                        y_vals = get_y_data(data, plot_mode)
+                        if is_dual:
+                            y_without_f = filter_narrow_peaks(data["wn"], y_vals[0], min_peak_width_cm)
+                            y_with_f = filter_narrow_peaks(data["wn"], y_vals[1], min_peak_width_cm)
                             fig_frag.add_trace(go.Scatter(
-                                x=data["wn"], y=y_smooth,
-                                mode="lines", name=label, line=dict(color=c, width=2),
-                            ))
-                        elif plot_mode == "ΔI (without − with)":
-                            y_smooth = apply_smooth(data["delta_i"], smooth_window, clip_negative)
-                            fig_frag.add_trace(go.Scatter(
-                                x=data["wn"], y=y_smooth,
-                                mode="lines", name=label, line=dict(color=c, width=2),
-                            ))
-                        else:
-                            y_smooth_without = apply_smooth(data["int_without"], smooth_window, clip_negative)
-                            y_smooth_with = apply_smooth(data["int_with"], smooth_window, clip_negative)
-                            fig_frag.add_trace(go.Scatter(
-                                x=data["wn"], y=y_smooth_without,
+                                x=data["wn"], y=y_without_f,
                                 mode="lines", name=f"{label} (no IR)",
                                 line=dict(color=c, width=2),
                             ))
                             fig_frag.add_trace(go.Scatter(
-                                x=data["wn"], y=y_smooth_with,
+                                x=data["wn"], y=y_with_f,
                                 mode="lines", name=f"{label} (with IR)",
                                 line=dict(color=c, width=2, dash="dash"),
                             ))
+                        else:
+                            y_f = filter_narrow_peaks(data["wn"], y_vals[0], min_peak_width_cm)
+                            fig_frag.add_trace(go.Scatter(
+                                x=data["wn"], y=y_f,
+                                mode="lines", name=label, line=dict(color=c, width=2),
+                            ))
+                        # Compute SNR for this channel
+                        _snr_data[label] = compute_snr(
+                            apply_smooth(data["delta_i"], smooth_window, False))
 
                     fig_frag.update_layout(
                         xaxis_title="Wavenumber (cm⁻¹)",
@@ -934,15 +1070,52 @@ def _misc_tabs_section():
                     )
                     st.plotly_chart(fig_frag, use_container_width=True)
 
+                    # ── SNR overlay subplot ──
+                    if show_snr:
+                        fig_snr = go.Figure()
+                        for idx, (label, snr_arr) in enumerate(_snr_data.items()):
+                            c = colors[idx % len(colors)]
+                            wn_arr = list(frag_results.values())[idx]["wn"]
+                            fig_snr.add_trace(go.Scatter(
+                                x=wn_arr, y=snr_arr,
+                                mode="lines", name=label, line=dict(color=c, width=1.5),
+                            ))
+                        # Threshold lines
+                        fig_snr.add_hline(y=3, line=dict(color="green", dash="dash", width=1),
+                                          annotation_text="SNR=3 (likely real)",
+                                          annotation_position="top left")
+                        fig_snr.add_hline(y=-3, line=dict(color="green", dash="dash", width=1))
+                        fig_snr.add_hline(y=2, line=dict(color="orange", dash="dot", width=1),
+                                          annotation_text="SNR=2 (marginal)",
+                                          annotation_position="bottom left")
+                        fig_snr.add_hline(y=-2, line=dict(color="orange", dash="dot", width=1))
+                        fig_snr.update_layout(
+                            xaxis_title="Wavenumber (cm⁻¹)",
+                            yaxis_title="SNR (ΔI / σ_noise)",
+                            title="Signal-to-Noise Ratio per Wavenumber",
+                            height=350,
+                            legend=dict(x=0.7, y=0.95),
+                        )
+                        st.plotly_chart(fig_snr, use_container_width=True)
+                        st.caption(
+                            "**Interpretation:** SNR > 3 → likely real absorption. "
+                            "SNR 2–3 → marginal. SNR < 2 → consistent with noise. "
+                            "Noise estimated from MAD of first-difference of ΔI."
+                        )
+
                     # Static overlay for report
                     fig_frag_static, ax_frag = plt.subplots(figsize=(12, 5))
                     for idx, (label, data) in enumerate(frag_results.items()):
                         c = colors[idx % len(colors)]
+                        y_vals = get_y_data(data, plot_mode)
                         if plot_mode == "-ln(depletion)":
-                            y_smooth = apply_smooth(data["ln_depletion"], smooth_window, clip_negative)
+                            y_smooth = filter_narrow_peaks(data["wn"], y_vals[0], min_peak_width_cm)
                             ax_frag.plot(data["wn"], y_smooth, color=c, lw=2, label=label)
                         elif plot_mode == "ΔI (without − with)":
-                            y_smooth = apply_smooth(data["delta_i"], smooth_window, clip_negative)
+                            y_smooth = filter_narrow_peaks(data["wn"], y_vals[0], min_peak_width_cm)
+                            ax_frag.plot(data["wn"], y_smooth, color=c, lw=2, label=label)
+                        elif plot_mode == "Fractional depletion (ΔI/I)":
+                            y_smooth = filter_narrow_peaks(data["wn"], y_vals[0], min_peak_width_cm)
                             ax_frag.plot(data["wn"], y_smooth, color=c, lw=2, label=label)
                         else:
                             y_smooth_without = apply_smooth(data["int_without"], smooth_window, clip_negative)

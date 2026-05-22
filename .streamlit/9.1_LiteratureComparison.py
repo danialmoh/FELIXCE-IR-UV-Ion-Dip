@@ -8,6 +8,7 @@ import os
 import glob
 import gzip
 import pickle
+from packages.load_dataset import _NumpyCompatUnpickler
 import configparser
 import zipfile
 import io
@@ -434,7 +435,7 @@ elif your_source == "Load .pkl.gz dataset & detect peaks here":
         else:
             try:
                 with gzip.open(_pkl_path, "rb") as f:
-                    bundle = pickle.load(f)
+                    bundle = _NumpyCompatUnpickler(f).load()
                 st.session_state["x_mass"] = bundle["x_mass"]
                 st.session_state["compilation_baseline_corrected_data"] = bundle["compilation_baseline_corrected_data"]
                 st.session_state["unique_wavenumbers"] = bundle["unique_wavenumbers"]

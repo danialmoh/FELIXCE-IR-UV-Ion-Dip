@@ -4,6 +4,7 @@ Usage:
     from packages.load_dataset import ensure_dataset_loaded
     ensure_dataset_loaded()  # shows UI and stops if data is not available
 """
+import io
 import os
 import gzip
 import pickle
@@ -11,6 +12,28 @@ import configparser
 import streamlit as st
 import numpy as np
 import pandas as pd
+
+
+class _NumpyCompatUnpickler(pickle.Unpickler):
+    """Handle pickles saved with a different NumPy major version.
+
+    NumPy 2.x moved ``numpy.core`` → ``numpy._core``.  If a pickle was saved
+    with NumPy 2.x and is loaded under NumPy 1.x (or vice-versa), the import
+    path stored in the pickle won't resolve.  This unpickler transparently
+    remaps the module path so the load succeeds regardless of direction.
+    """
+
+    def find_class(self, module: str, name: str):
+        # NumPy 2 → NumPy 1: numpy._core.* → numpy.core.*
+        if module.startswith("numpy._core"):
+            module = module.replace("numpy._core", "numpy.core", 1)
+        # NumPy 1 → NumPy 2 (future-proofing)
+        elif module.startswith("numpy.core"):
+            try:
+                return super().find_class(module, name)
+            except (ModuleNotFoundError, AttributeError):
+                module = module.replace("numpy.core", "numpy._core", 1)
+        return super().find_class(module, name)
 
 
 def _get_default_path():
@@ -94,7 +117,7 @@ def ensure_dataset_loaded(
         else:
             try:
                 with gzip.open(load_path, "rb") as f:
-                    bundle = pickle.load(f)
+                    bundle = _NumpyCompatUnpickler(f).load()
 
                 # Populate standard keys
                 st.session_state["x_mass"] = bundle["x_mass"]

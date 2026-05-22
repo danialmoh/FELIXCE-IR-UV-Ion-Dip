@@ -14,6 +14,9 @@ import matplotlib
 matplotlib.use("Agg")
 import io
 import os
+import json
+import configparser
+from pathlib import Path
 from datetime import datetime
 
 from packages.load_dataset import ensure_dataset_loaded
@@ -42,10 +45,35 @@ st.caption(
 )
 
 # ════════════════════════════════════════════════════════════════════════════════
-# PERSISTENT ASSIGNMENT STORE
+# PERSISTENT ASSIGNMENT STORE — loads from JSON on disk at startup
 # ════════════════════════════════════════════════════════════════════════════════
+def _assignments_json_path():
+    """Return path to the persistent assignments JSON file, or None."""
+    _file_dir = st.session_state.get("file_directory", "")
+    if not _file_dir:
+        _defaults_file = r'./.streamlit/defaults.ini'
+        if os.path.exists(_defaults_file):
+            _cfg = configparser.ConfigParser()
+            _cfg.read(_defaults_file)
+            try:
+                _file_dir = _cfg.get('Import Data', 'file_directory')
+            except configparser.Error:
+                pass
+    if not _file_dir:
+        return None
+    return Path(_file_dir) / "output" / "assignments" / "assignments.json"
+
 if "_mass_assignments" not in st.session_state:
-    st.session_state["_mass_assignments"] = {}  # {mz: {formula, verdict, notes, ...}}
+    # Try loading from disk first
+    _json_p = _assignments_json_path()
+    if _json_p is not None and _json_p.exists():
+        try:
+            with open(_json_p, "r") as _jf:
+                st.session_state["_mass_assignments"] = json.load(_jf)
+        except Exception:
+            st.session_state["_mass_assignments"] = {}
+    else:
+        st.session_state["_mass_assignments"] = {}
 
 
 # ════════════════════════════════════════════════════════════════════════════════
@@ -311,7 +339,6 @@ for i, wn in enumerate(wn_sorted):
 with np.errstate(divide="ignore", invalid="ignore"):
     depletion = int_with / int_without
     ln_depletion = -np.log(np.clip(depletion, 1e-10, None))
-    delta_i = int_without - int_with
 
 # Optional smoothing
 def _smooth(y):
@@ -320,12 +347,11 @@ def _smooth(y):
     w = _sg_w if _sg_w % 2 == 1 else _sg_w + 1
     return savgol_filter(y, window_length=w, polyorder=min(3, w - 1))
 
-# Three-panel plot: IR on/off, Depletion ΔI, −ln(depletion)
+# Two-panel plot: IR on/off, −ln(depletion)
 fig_ir = make_subplots(
-    rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.06,
+    rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08,
     subplot_titles=[
         f"Integrated Signal (m/z {selected_mz:.1f} ± {half_width})",
-        "ΔI = I(no IR) − I(with IR)",
         "−ln(depletion)",
     ],
 )
@@ -333,15 +359,12 @@ fig_ir.add_trace(go.Scatter(x=wn_arr, y=_smooth(int_without), mode="lines",
                              name="Without IR", line=dict(color="#1f77b4", width=2)), row=1, col=1)
 fig_ir.add_trace(go.Scatter(x=wn_arr, y=_smooth(int_with), mode="lines",
                              name="With IR", line=dict(color="#ff7f0e", width=2, dash="dash")), row=1, col=1)
-fig_ir.add_trace(go.Scatter(x=wn_arr, y=_smooth(delta_i), mode="lines",
-                             name="ΔI", line=dict(color="#2ca02c", width=2)), row=2, col=1)
 fig_ir.add_trace(go.Scatter(x=wn_arr, y=_smooth(ln_depletion), mode="lines",
-                             name="−ln(depl)", line=dict(color="#d62728", width=2)), row=3, col=1)
-fig_ir.update_xaxes(title_text="Wavenumber (cm⁻¹)", row=3, col=1)
+                             name="−ln(depl)", line=dict(color="#d62728", width=2)), row=2, col=1)
+fig_ir.update_xaxes(title_text="Wavenumber (cm⁻¹)", row=2, col=1)
 fig_ir.update_yaxes(title_text="Signal (a.u.)", row=1, col=1)
-fig_ir.update_yaxes(title_text="ΔI", row=2, col=1)
-fig_ir.update_yaxes(title_text="−ln(depl)", row=3, col=1)
-fig_ir.update_layout(height=750, showlegend=True, legend=dict(orientation="h", y=1.02))
+fig_ir.update_yaxes(title_text="−ln(depl)", row=2, col=1)
+fig_ir.update_layout(height=550, showlegend=True, legend=dict(orientation="h", y=1.02))
 st.plotly_chart(fig_ir, use_container_width=True)
 
 # Store the extracted spectrum for later use (raw, unsmoothed for independent smoothing in Section 4)
@@ -352,10 +375,10 @@ st.session_state["_mid_selected_mz"] = selected_mz
 st.success(f"✅ Extracted IR from {n_bins} m/z bins × {len(wn_sorted)} wavenumber steps")
 
 # Quick assessment: is this a real signal?
-_max_delta = np.nanmax(np.abs(delta_i))
-_mean_delta = np.nanmean(np.abs(delta_i))
-_snr = _max_delta / _mean_delta if _mean_delta > 0 else 0
-st.caption(f"Signal assessment: max |ΔI| = {_max_delta:.4f}, mean |ΔI| = {_mean_delta:.4f}, "
+_max_depl = np.nanmax(np.abs(ln_depletion))
+_mean_depl = np.nanmean(np.abs(ln_depletion))
+_snr = _max_depl / _mean_depl if _mean_depl > 0 else 0
+st.caption(f"Signal assessment: max |−ln(depl)| = {_max_depl:.4f}, mean = {_mean_depl:.4f}, "
            f"peak/mean ratio = {_snr:.1f}×")
 if _snr < 3:
     st.warning("⚠️ Low signal-to-noise ratio. This mass channel may not have a real IR signature.")
@@ -512,23 +535,65 @@ if _ref_files:
                 _df = pd.read_csv(io.BytesIO(_raw) if isinstance(_raw, bytes) else io.StringIO(_raw),
                                   sep=None, engine="python")
                 if len(_df.columns) >= 2:
-                    ref_spectra.append({
-                        "name": _fname,
-                        "wn": _df.iloc[:, 0].values.astype(float),
-                        "intensity": _df.iloc[:, 1].values.astype(float),
-                        "source": "CSV",
-                    })
-                    st.success(f"📄 CSV: {_fname} — {len(_df)} pts")
+                    _csv_wn = _df.iloc[:, 0].values.astype(float)
+                    _csv_int = _df.iloc[:, 1].values.astype(float)
+                    # Auto-detect transmittance and convert to absorbance
+                    _col2_name = str(_df.columns[1]).lower()
+                    if "transmittance" in _col2_name or "trans" in _col2_name or "%t" in _col2_name:
+                        with np.errstate(divide="ignore", invalid="ignore"):
+                            _csv_int = -np.log10(np.clip(_csv_int / 100.0, 1e-6, None))
+                        st.info(f"ℹ️ Detected transmittance column → converted to absorbance (−log₁₀(T))")
+                    _sparse = len(_df) < 100  # treat as stick/peak list if < 100 points
+                    if _sparse:
+                        # Broaden peak list into continuous spectrum
+                        _bw = st.session_state.get("_mid_bw_frac", 0.007)
+                        _csv_wn_broad, _csv_int_broad = broaden_spectrum_felix(
+                            _csv_wn, _csv_int, bw_frac=_bw)
+                        ref_spectra.append({
+                            "name": f"{_fname} (broadened)",
+                            "wn": _csv_wn_broad,
+                            "intensity": _csv_int_broad,
+                            "source": "CSV",
+                            "sparse": False,
+                        })
+                        st.success(f"📄 CSV: {_fname} — {len(_df)} peaks → broadened to spectrum")
+                    else:
+                        ref_spectra.append({
+                            "name": _fname,
+                            "wn": _csv_wn,
+                            "intensity": _csv_int,
+                            "source": "CSV",
+                            "sparse": False,
+                        })
+                        st.success(f"📄 CSV: {_fname} — {len(_df)} pts (continuous)")
 
             elif _ext == ".stk":
                 _text = _raw.decode("utf-8", errors="replace") if isinstance(_raw, bytes) else _raw
-                freqs, intens, meta = parse_dft_file(_text, _fname)
+                # Try plain two-column stick format first (freq\tintensity or freq,intensity)
+                _stk_freqs, _stk_intens = [], []
+                for _line in _text.splitlines():
+                    _line = _line.strip()
+                    if not _line or _line.startswith("#"):
+                        continue
+                    _parts = _line.replace(",", "\t").split()
+                    if len(_parts) >= 2:
+                        try:
+                            _stk_freqs.append(float(_parts[0]))
+                            _stk_intens.append(float(_parts[1]))
+                        except ValueError:
+                            continue
+                if len(_stk_freqs) > 0:
+                    freqs = np.array(_stk_freqs)
+                    intens = np.array(_stk_intens)
+                else:
+                    # Fallback to DFT parser (e.g. ORCA .ir.stk)
+                    freqs, intens, _ = parse_dft_file(_text, _fname)
                 if freqs is not None and len(freqs) > 0:
                     _bw = st.session_state.get("_mid_bw_frac", 0.007)
                     wn_broad, int_broad = broaden_spectrum_felix(freqs, intens, bw_frac=_bw)
                     ref_spectra.append({"name": f"DFT: {_fname}", "wn": wn_broad, "intensity": int_broad,
                                         "source": "DFT", "freqs": freqs, "intens": intens})
-                    st.success(f"🧪 DFT stick: {_fname} — {len(freqs)} modes")
+                    st.success(f"🧪 DFT stick: {_fname} — {len(freqs)} modes → broadened")
 
         except Exception as _e:
             st.warning(f"Could not parse {_fname}: {_e}")
@@ -597,7 +662,7 @@ if your_wn is not None or ref_spectra:
 
     if your_wn is not None:
         _your_smoothed = _smooth_spectrum(your_wn, your_intensity)
-        _traces.append(("Your IR (−ln depl)", your_wn, _norm(_your_smoothed), "#d62728", False))
+        _traces.append(("Your IR (−ln depl)", your_wn, _norm(_your_smoothed), "#d62728", False, False))
     for _si, _s in enumerate(ref_spectra):
         _c = _palette[(_si + 1) % len(_palette)]
         _ref_wn = np.asarray(_s["wn"])
@@ -607,14 +672,25 @@ if your_wn is not None or ref_spectra:
             _mask = (_ref_wn >= _xmin) & (_ref_wn <= _xmax)
             _ref_wn = _ref_wn[_mask]
             _ref_int = _ref_int[_mask]
-        _traces.append((_s["name"], _ref_wn, _norm(_ref_int), _c, True))
+        _is_sparse = _s.get("sparse", False)
+        _traces.append((_s["name"], _ref_wn, _norm(_ref_int), _c, True, _is_sparse))
 
-    for _ri, (_tname, _twn, _ty, _tc, _is_ref) in enumerate(_traces):
+    # unpack experimental trace (5-tuple, no sparse flag)
+    _traces[0] = _traces[0] + (False,) if len(_traces[0]) == 5 else _traces[0]
+
+    for _ri, (_tname, _twn, _ty, _tc, _is_ref, _is_sparse) in enumerate(_traces):
         _off = _ri * _ridge_gap if _ridge else 0
-        fig_cmp.add_trace(go.Scatter(
-            x=_twn, y=_ty + _off, mode="lines",
-            line=dict(color=_tc, width=2), name=_tname,
-        ))
+        if _is_sparse:
+            # Render as vertical sticks (bar)
+            fig_cmp.add_trace(go.Bar(
+                x=_twn, y=_ty + _off, name=_tname,
+                marker_color=_tc, opacity=0.8, width=3,
+            ))
+        else:
+            fig_cmp.add_trace(go.Scatter(
+                x=_twn, y=_ty + _off, mode="lines",
+                line=dict(color=_tc, width=2), name=_tname,
+            ))
         # Peak detection on reference spectra → vertical lines
         if _is_ref and _show_peaks and len(_ty) > 3:
             _prom_val = _peak_prom_pct * float(np.nanmax(_ty) - np.nanmin(_ty))
@@ -729,16 +805,147 @@ with _v_col2:
 
 _chosen_formula = st.session_state.get("_mid_chosen_formula", "")
 
+def _get_default_output_dir():
+    """Resolve the default output directory from session state or defaults.ini."""
+    _file_dir = st.session_state.get("file_directory", "")
+    if not _file_dir:
+        _defaults_file = r'./.streamlit/defaults.ini'
+        if os.path.exists(_defaults_file):
+            _cfg = configparser.ConfigParser()
+            _cfg.read(_defaults_file)
+            try:
+                _file_dir = _cfg.get('Import Data', 'file_directory')
+            except configparser.Error:
+                pass
+    if not _file_dir:
+        return ""
+    return str(Path(_file_dir) / "output")
+
+_default_out = _get_default_output_dir()
+_output_path = st.text_input(
+    "Output folder", value=_default_out, key="_mid_output_path",
+    help="Where assignment files will be saved. Change to any folder you like.",
+)
+
+def _get_output_dir():
+    if not _output_path or not _output_path.strip():
+        return None
+    return Path(_output_path.strip())
+
 if st.button("💾 Save Assignment", type="primary", key="_mid_save"):
     _entry = {
-        "mz": selected_mz,
+        "mz": float(selected_mz),
         "formula": _chosen_formula,
         "verdict": _verdict,
         "notes": _notes,
         "timestamp": datetime.now().isoformat(),
     }
     st.session_state["_mass_assignments"][f"{selected_mz:.2f}"] = _entry
-    st.success(f"Saved: m/z {selected_mz:.1f} → {_chosen_formula} ({_verdict})")
+
+    # ── Persist to disk ──
+    _out = _get_output_dir()
+    if _out is None:
+        st.warning("⚠️ No output directory configured — saved to session only.")
+    else:
+        _safe_mz = f"{selected_mz:.1f}".replace(".", "p")
+        _safe_form = (_chosen_formula or "unknown").replace(" ", "_")
+        if ref_spectra:
+            _ref_tag = "_".join(
+                os.path.splitext(s["name"])[0].replace("/", "-").replace("\\", "-").replace(" ", "_")[:30]
+                for s in ref_spectra
+            )[:80]
+        else:
+            _ref_tag = "no_ref"
+        _assign_dir = _out / "assignments" / f"mz{_safe_mz}_{_safe_form}_{_ref_tag}"
+        _assign_dir.mkdir(parents=True, exist_ok=True)
+
+        _saved_files = []
+
+        # 1) Combined CSV: experimental + interpolated references on same grid
+        _exp_wn = st.session_state.get("_mid_your_wn")
+        _exp_int = st.session_state.get("_mid_your_intensity")
+        if _exp_wn is not None:
+            _combined = pd.DataFrame({
+                "wavenumber_cm-1": _exp_wn,
+                "experimental_neg_ln_depl": _exp_int,
+            })
+            # Interpolate each reference onto the experimental wavenumber grid
+            for _ri, _rs in enumerate(ref_spectra):
+                _rname = _rs["name"].replace("/", "-").replace("\\", "-").replace(" ", "_")[:50]
+                _rwn = np.asarray(_rs["wn"], dtype=float)
+                _rint = np.asarray(_rs["intensity"], dtype=float)
+                _interp = np.interp(_exp_wn, _rwn, _rint, left=0.0, right=0.0)
+                _combined[f"ref{_ri+1}_{_rname}"] = _interp
+            _spectra_fname = f"mz{_safe_mz}_{_safe_form}_{_verdict}.csv"
+            _combined_path = _assign_dir / _spectra_fname
+            _combined.to_csv(_combined_path, index=False)
+            _saved_files.append(_spectra_fname)
+
+        # 2) DFT stick spectra (raw frequencies) if available
+        for _ri, _rs in enumerate(ref_spectra):
+            if _rs.get("freqs") is not None:
+                _rname = _rs["name"].replace("/", "-").replace("\\", "-").replace(" ", "_")[:50]
+                _stick_df = pd.DataFrame({
+                    "frequency_cm-1": _rs["freqs"],
+                    "intensity_km_mol": _rs["intens"],
+                })
+                _stick_path = _assign_dir / f"ref{_ri+1}_{_rname}_sticks.csv"
+                _stick_df.to_csv(_stick_path, index=False)
+                _saved_files.append(str(_stick_path.name))
+
+        # 3) Comparison plot PNG
+        if _exp_wn is not None:
+            try:
+                _fig_s, _ax_s = plt.subplots(figsize=(10, 5))
+                _yr_s = _exp_int / np.nanmax(np.abs(_exp_int)) if np.nanmax(np.abs(_exp_int)) > 0 else _exp_int
+                _ax_s.plot(_exp_wn, _yr_s, color="#d62728", lw=2, label="Experimental")
+                for _ri, _rs in enumerate(ref_spectra):
+                    _c = _palette[(_ri + 1) % len(_palette)]
+                    _rwn = np.asarray(_rs["wn"])
+                    _rint = np.asarray(_rs["intensity"], dtype=float)
+                    _rint_n = _rint / np.nanmax(np.abs(_rint)) if np.nanmax(np.abs(_rint)) > 0 else _rint
+                    _ax_s.plot(_rwn, _rint_n, color=_c, lw=1.5, label=_rs["name"][:40])
+                _ax_s.set_xlabel("Wavenumber (cm⁻¹)", fontsize=11)
+                _ax_s.set_ylabel("Normalized Intensity", fontsize=11)
+                _ax_s.set_title(f"m/z {selected_mz:.1f} — {_chosen_formula or '?'} ({_verdict})",
+                                fontsize=12, fontweight="bold")
+                _ax_s.legend(fontsize=8)
+                _ax_s.grid(True, alpha=0.3)
+                _fig_s.tight_layout()
+                _plot_path = _assign_dir / "comparison_plot.png"
+                _fig_s.savefig(_plot_path, dpi=300, bbox_inches="tight")
+                plt.close(_fig_s)
+                _saved_files.append("comparison_plot.png")
+            except Exception as _pe:
+                st.warning(f"⚠️ Could not save plot: {_pe}")
+
+        # 4) Structure image if available
+        if "_mid_structure_img" in st.session_state:
+            _struct_path = _assign_dir / "structure.png"
+            _struct_path.write_bytes(st.session_state["_mid_structure_img"])
+            _saved_files.append("structure.png")
+
+        st.success(
+            f"✅ Saved m/z {selected_mz:.1f} → {_chosen_formula} ({_verdict})\n\n"
+            f"📁 `{_assign_dir}`\n\n"
+            f"Files: {', '.join(_saved_files)}"
+        )
+
+    # ── Save master assignments JSON (persistent across sessions) ──
+    _json_p = _assignments_json_path()
+    if _json_p is not None:
+        _json_p.parent.mkdir(parents=True, exist_ok=True)
+        with open(_json_p, "w") as _jf:
+            json.dump(st.session_state["_mass_assignments"], _jf, indent=2)
+    # Also save CSV copy for easy viewing
+    _out2 = _get_output_dir()
+    if _out2 is not None:
+        _all_assign = st.session_state.get("_mass_assignments", {})
+        if _all_assign:
+            _master_df = pd.DataFrame(list(_all_assign.values()))
+            _master_path = _out2 / "assignments" / "all_assignments.csv"
+            _master_path.parent.mkdir(parents=True, exist_ok=True)
+            _master_df.to_csv(_master_path, index=False)
 
 # Show all assignments
 _assignments = st.session_state.get("_mass_assignments", {})
@@ -821,7 +1028,6 @@ if your_wn is not None:
         ax_ir.set_xlabel("Wavenumber (cm⁻¹)", fontsize=11)
         ax_ir.set_ylabel("Intensity (norm.)" if _normalize else "Intensity", fontsize=11)
         ax_ir.set_title(f"IR Spectrum — m/z {selected_mz:.1f}", fontsize=12, fontweight="bold")
-        ax_ir.legend(fontsize=8, loc="upper right")
 
         # Panel 3: Structure image
         if ax_struct is not None and has_struct:
@@ -832,7 +1038,7 @@ if your_wn is not None:
             ax_struct.axis("off")
             ax_struct.set_title("Structure", fontsize=12, fontweight="bold")
 
-        # Panel 4: Info text
+        # Panel 4: Info text (+ legend under it)
         if ax_info is not None:
             ax_info.axis("off")
             _info_lines = [
@@ -843,9 +1049,15 @@ if your_wn is not None:
             ]
             if _notes:
                 _info_lines.append(f"\nNotes: {_notes}")
-            ax_info.text(0.05, 0.95, "\n".join(_info_lines), transform=ax_info.transAxes,
+            ax_info.text(0.05, 0.40, "\n".join(_info_lines), transform=ax_info.transAxes,
                          fontsize=10, va="top", ha="left", family="monospace",
                          bbox=dict(boxstyle="round,pad=0.5", facecolor="lightyellow", alpha=0.8))
+            # Legend under info text
+            ax_info.legend(*ax_ir.get_legend_handles_labels(), loc="upper left",
+                          fontsize=7, frameon=True, bbox_to_anchor=(0.0, 0.0))
+        else:
+            # No info panel: legend on IR panel
+            ax_ir.legend(fontsize=8, loc="upper right")
 
         fig_pub.tight_layout()
 
