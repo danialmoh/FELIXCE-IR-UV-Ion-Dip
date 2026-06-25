@@ -315,18 +315,56 @@ with _sel_col2:
                                   min_value=0.05, max_value=2.0, step=0.05, key="_mid_hw")
 with _sel_col3:
     _sg_on = st.checkbox("Apply SG smoothing", value=False, key="_mid_sg")
-    _sg_w = st.number_input("SG window", value=7, min_value=3, max_value=51, step=2,
+    _sg_w = st.number_input("SG window", value=7, min_value=3, max_value=101, step=2,
                             key="_mid_sg_w", disabled=not _sg_on)
+
+# ── Isotope (multi-peak) integration ─────────────────────────────────────────
+# Elements like Br (⁷⁹Br/⁸¹Br) and Cl (³⁵Cl/³⁷Cl) split a fragment into several
+# isotopologue peaks separated by ~2 amu. Summing all of them recovers the full
+# ion signal and improves the depletion S/N.
+_iso_c1, _iso_c2, _iso_c3 = st.columns([1, 1, 1])
+with _iso_c1:
+    _iso_on = st.checkbox("Integrate isotopic peaks", value=False, key="_mid_iso_on",
+                          help="Sum several isotopologue peaks (e.g. ⁷⁹Br + ⁸¹Br) into one IR trace.")
+with _iso_c2:
+    _iso_spacing = st.number_input("Isotope spacing (amu)", value=2.0, min_value=0.5,
+                                   max_value=10.0, step=0.5, key="_mid_iso_sp",
+                                   disabled=not _iso_on,
+                                   help="Mass gap between adjacent isotope peaks (Br/Cl → 2).")
+with _iso_c3:
+    _iso_n = int(st.number_input("Number of peaks", value=2, min_value=1, max_value=8,
+                                 step=1, key="_mid_iso_n", disabled=not _iso_on,
+                                 help="How many peaks to sum, starting from the selected m/z upward."))
+
+# Build the list of peak centres to integrate
+if _iso_on and _iso_n > 1:
+    iso_centers = [selected_mz + k * _iso_spacing for k in range(_iso_n)]
+else:
+    iso_centers = [selected_mz]
+
+def _build_iso_mask(_centers, _hw):
+    _xm = np.asarray(x_mass)
+    _m = np.zeros(len(_xm), dtype=bool)
+    for _c in _centers:
+        _m |= (_xm >= _c - _hw) & (_xm <= _c + _hw)
+    return _m
 
 # Extract IR spectrum for the selected mass
 wn_sorted = sorted(unique_wavenumbers)
 wn_arr = np.array(wn_sorted, dtype=float)
-sel_mask = (np.asarray(x_mass) >= selected_mz - half_width) & (np.asarray(x_mass) <= selected_mz + half_width)
+sel_mask = _build_iso_mask(iso_centers, half_width)
 n_bins = int(sel_mask.sum())
 
 if n_bins == 0:
     st.error(f"No m/z bins within ±{half_width} of {selected_mz:.1f}")
     st.stop()
+
+if _iso_on and _iso_n > 1:
+    st.caption(
+        "🧬 Integrating isotopic peaks at m/z "
+        + ", ".join(f"{_c:.1f}" for _c in iso_centers)
+        + f" (±{half_width} each)"
+    )
 
 int_without = np.zeros(len(wn_sorted))
 int_with = np.zeros(len(wn_sorted))
@@ -351,6 +389,9 @@ def _smooth(y):
 fig_ir = make_subplots(
     rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08,
     subplot_titles=[
+        (f"Integrated Signal ({len(iso_centers)} isotopic peaks @ "
+         + "/".join(f"{_c:.0f}" for _c in iso_centers) + f", ±{half_width})")
+        if (_iso_on and _iso_n > 1) else
         f"Integrated Signal (m/z {selected_mz:.1f} ± {half_width})",
         "−ln(depletion)",
     ],
@@ -372,6 +413,29 @@ st.session_state["_mid_your_wn"] = wn_arr
 st.session_state["_mid_your_intensity"] = ln_depletion
 st.session_state["_mid_selected_mz"] = selected_mz
 
+# ── Download extracted IR spectrum (raw + smoothed) ───────────────────────────
+_dl_df = pd.DataFrame({
+    "wavenumber_cm-1": wn_arr,
+    "int_without_IR": int_without,
+    "int_with_IR": int_with,
+    "neg_ln_depletion": ln_depletion,
+})
+if _sg_on:
+    _dl_df["int_without_IR_smoothed"] = _smooth(int_without)
+    _dl_df["int_with_IR_smoothed"] = _smooth(int_with)
+    _dl_df["neg_ln_depletion_smoothed"] = _smooth(ln_depletion)
+
+_iso_tag = f"_iso{len(iso_centers)}" if (_iso_on and _iso_n > 1) else ""
+_sg_tag = f"_sg{_sg_w}" if _sg_on else "_raw"
+st.download_button(
+    "📥 Download IR spectrum (CSV)",
+    data=_dl_df.to_csv(index=False).encode("utf-8"),
+    file_name=f"IR_mz{selected_mz:.1f}_hw{half_width}{_iso_tag}{_sg_tag}.csv",
+    mime="text/csv",
+    key="_mid_dl_ir",
+    help="Raw columns always included; smoothed columns added when SG smoothing is on.",
+)
+
 st.success(f"✅ Extracted IR from {n_bins} m/z bins × {len(wn_sorted)} wavenumber steps")
 
 # Quick assessment: is this a real signal?
@@ -382,6 +446,286 @@ st.caption(f"Signal assessment: max |−ln(depl)| = {_max_depl:.4f}, mean = {_me
            f"peak/mean ratio = {_snr:.1f}×")
 if _snr < 3:
     st.warning("⚠️ Low signal-to-noise ratio. This mass channel may not have a real IR signature.")
+
+# ── Half-width sweep ──────────────────────────────────────────────────────────
+with st.expander("🔍 Integration half-width sweep — find the optimal value"):
+    st.caption(
+        "Overlay −ln(depletion) traces for a range of half-widths to identify "
+        "which value maximises signal quality without cross-contaminating neighbours."
+    )
+    _sw_col1, _sw_col2, _sw_col3, _sw_col4 = st.columns(4)
+    with _sw_col1:
+        _sw_lo = st.number_input("Min half-width (amu)", value=0.05, min_value=0.01,
+                                  max_value=2.0, step=0.05, key="_mid_sw_lo")
+    with _sw_col2:
+        _sw_hi = st.number_input("Max half-width (amu)", value=0.80, min_value=0.05,
+                                  max_value=5.0, step=0.05, key="_mid_sw_hi")
+    with _sw_col3:
+        _sw_n = int(st.number_input("Number of steps", value=8, min_value=2,
+                                     max_value=20, step=1, key="_mid_sw_n"))
+    with _sw_col4:
+        _sw_norm = st.checkbox("Normalise traces", value=True, key="_mid_sw_norm")
+        _sw_ridge = st.checkbox("Ridge layout", value=False, key="_mid_sw_ridge")
+        _sw_ridge_gap = 1.0
+        if _sw_ridge:
+            _sw_ridge_gap = st.slider("Ridge gap", 0.2, 2.0, 0.8, 0.1, key="_mid_sw_rgap")
+
+    _sw_widths = np.linspace(_sw_lo, _sw_hi, _sw_n)
+    _sw_palette = [
+        "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+        "#8c564b", "#e377c2", "#bcbd22", "#17becf", "#aec7e8",
+        "#ffbb78", "#98df8a", "#ff9896", "#c5b0d5", "#c49c94",
+        "#f7b6d2", "#dbdb8d", "#9edae5", "#393b79", "#637939",
+    ]
+
+    _sw_summary_rows = []
+    _sw_numeric = []  # parallel list of raw floats for auto-selection
+    fig_sw = go.Figure()
+
+    for _swi, _sw in enumerate(_sw_widths):
+        _sw_mask = _build_iso_mask(iso_centers, _sw)
+        _sw_bins = int(_sw_mask.sum())
+        if _sw_bins == 0:
+            continue
+        _sw_wo = np.zeros(len(wn_sorted))
+        _sw_wi = np.zeros(len(wn_sorted))
+        for _ii, _wn in enumerate(wn_sorted):
+            _df_wn = compilation[_wn]
+            _sw_wo[_ii] = _df_wn.iloc[_sw_mask, plot_col_wo].values.sum()
+            _sw_wi[_ii] = _df_wn.iloc[_sw_mask, plot_col_w].values.sum()
+        with np.errstate(divide="ignore", invalid="ignore"):
+            _sw_dep = -np.log(np.clip(_sw_wi / _sw_wo, 1e-10, None))
+
+        _sw_max = np.nanmax(np.abs(_sw_dep))
+        _sw_mean = np.nanmean(np.abs(_sw_dep))
+        _sw_snr = _sw_max / _sw_mean if _sw_mean > 0 else 0
+        _sw_summary_rows.append({
+            "Half-width (amu)": f"{_sw:.3f}",
+            "m/z bins": _sw_bins,
+            "max |−ln(depl)|": f"{_sw_max:.4f}",
+            "mean |−ln(depl)|": f"{_sw_mean:.4f}",
+            "peak/mean SNR": f"{_sw_snr:.1f}",
+        })
+        _sw_numeric.append({"hw": _sw, "bins": _sw_bins, "snr": _sw_snr, "maxd": _sw_max})
+
+        _sw_y = _sw_dep.copy()
+        if _sw_norm:
+            _rng = np.nanmax(_sw_y) - np.nanmin(_sw_y)
+            if _rng > 0:
+                _sw_y = (_sw_y - np.nanmin(_sw_y)) / _rng
+        _sw_off = _swi * _sw_ridge_gap if _sw_ridge else 0
+        _sw_color = _sw_palette[_swi % len(_sw_palette)]
+        fig_sw.add_trace(go.Scatter(
+            x=wn_arr, y=_sw_y + _sw_off,
+            mode="lines",
+            name=f"±{_sw:.3f} amu ({_sw_bins} bins)",
+            line=dict(color=_sw_color, width=1.8),
+        ))
+
+    fig_sw.update_layout(
+        xaxis_title="Wavenumber (cm⁻¹)",
+        yaxis_title="−ln(depl)" + (" [norm.]" if _sw_norm else "") + (" [stacked]" if _sw_ridge else ""),
+        title=f"Half-width sweep — m/z {selected_mz:.1f}",
+        height=480,
+        legend=dict(orientation="h", y=1.02, xanchor="right", x=1),
+    )
+    st.plotly_chart(fig_sw, use_container_width=True)
+
+    if _sw_summary_rows:
+        st.markdown("**Summary table — signal quality vs. half-width**")
+        _sw_df = pd.DataFrame(_sw_summary_rows)
+        st.dataframe(_sw_df, hide_index=True, use_container_width=True)
+
+        # ── Auto-select optimal half-width (plateau-only) ─────────────────
+        # The window must be wide enough to capture the FULL mass peak. As the
+        # half-width grows, max|−ln(depl)| rises then flattens once the whole
+        # peak is integrated. Beyond that it only adds noise / neighbour
+        # contamination. So the optimum is the SMALLEST width at which
+        # max|−ln(depl)| stops growing (gain to next step < 5 %).
+        #
+        # NOTE: peak/mean "SNR" is deliberately NOT used — it is biased toward
+        # the narrowest window (fewer m/z bins → fewer counts → spikier trace
+        # → artificially high max/mean). It is shown for information only.
+        if len(_sw_numeric) >= 2:
+            _sw_maxds = np.array([r["maxd"] for r in _sw_numeric])
+            _sw_hws   = np.array([r["hw"]   for r in _sw_numeric])
+            _sw_snrs  = np.array([r["snr"]  for r in _sw_numeric])
+
+            # First width where the next step adds < 5 % more max|−ln(depl)|.
+            # Default to the widest if it never plateaus within the swept range.
+            _opt_idx = len(_sw_numeric) - 1
+            for _si in range(len(_sw_maxds) - 1):
+                _gain = (_sw_maxds[_si + 1] - _sw_maxds[_si]) / max(_sw_maxds[_si], 1e-12)
+                if _gain < 0.05:
+                    _opt_idx = _si
+                    break
+
+            _opt_hw  = float(_sw_hws[_opt_idx])
+            _opt_max = float(_sw_maxds[_opt_idx])
+            _plateaued = _opt_idx < len(_sw_numeric) - 1
+
+            if _plateaued:
+                st.success(
+                    f"**Suggested optimal half-width: ±{_opt_hw:.3f} amu** "
+                    f"(max|−ln(depl)| = {_opt_max:.4f} — plateaus here; "
+                    f"wider windows add <5 % signal, only noise/contamination)"
+                )
+            else:
+                st.warning(
+                    f"**Suggested optimal half-width: ±{_opt_hw:.3f} amu** "
+                    f"(max|−ln(depl)| = {_opt_max:.4f}) — *no plateau reached within "
+                    f"the swept range; try increasing the max half-width.*"
+                )
+            st.caption(
+                f"ℹ️ peak/mean ratio at this width = {float(_sw_snrs[_opt_idx]):.1f}× "
+                f"(shown for reference only; not used for selection)."
+            )
+
+            if st.button(f"⬆️ Apply {_opt_hw:.3f} amu as integration half-width",
+                         key="_mid_sw_apply"):
+                st.session_state["_mid_hw"] = _opt_hw
+                st.rerun()
+
+
+# ── Savitzky-Golay window sweep ───────────────────────────────────────────────
+with st.expander("🌊 Smoothing (SG window) sweep — avoid fake peaks & over-smoothing"):
+    st.caption(
+        "IR-UV ion-dip spectra are noisy. Too small a window keeps noise (spurious peaks); "
+        "too large smears or invents peaks. The optimal window is the **largest** one whose "
+        "residual (raw − smoothed) is still **white noise** — i.e. no real signal has leaked "
+        "into the residual yet."
+    )
+    _gw_col1, _gw_col2, _gw_col3 = st.columns(3)
+    with _gw_col1:
+        _gw_max = st.number_input("Max SG window (odd)", value=31, min_value=5,
+                                   max_value=101, step=2, key="_mid_gw_max")
+    with _gw_col2:
+        _gw_poly = st.number_input("Polynomial order", value=3, min_value=1,
+                                    max_value=5, step=1, key="_mid_gw_poly")
+    with _gw_col3:
+        _gw_acthr = st.slider("Residual whiteness threshold |r₁|", 0.05, 0.50, 0.20, 0.05,
+                              key="_mid_gw_acthr",
+                              help="Max allowed lag-1 autocorrelation of the residual. "
+                                   "Above this, real peak structure is leaking into the residual "
+                                   "(over-smoothing).")
+
+    _gw_sig = np.asarray(ln_depletion, dtype=float)
+    _gw_n = len(_gw_sig)
+
+    if _gw_n < 7:
+        st.info("Spectrum too short for a meaningful SG sweep.")
+    else:
+        # Candidate odd windows from 3 up to min(_gw_max, n) — window must exceed poly order
+        _gw_hi = int(min(_gw_max, _gw_n if _gw_n % 2 == 1 else _gw_n - 1))
+        _gw_windows = [w for w in range(3, _gw_hi + 1, 2) if w > _gw_poly]
+
+        # Peak prominence baseline: a small fraction of the raw dynamic range
+        _gw_rng = float(np.nanmax(_gw_sig) - np.nanmin(_gw_sig))
+        _gw_prom = max(0.05 * _gw_rng, 1e-6)
+
+        _gw_rows, _gw_numeric = [], []
+        _gw_fig = go.Figure()
+        _gw_fig.add_trace(go.Scatter(
+            x=wn_arr, y=_gw_sig, mode="lines", name="raw",
+            line=dict(color="#bbbbbb", width=1),
+        ))
+        _gw_pal = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+                   "#8c564b", "#e377c2", "#17becf", "#bcbd22", "#393b79"]
+
+        for _gi, _w in enumerate(_gw_windows):
+            _po = min(int(_gw_poly), _w - 1)
+            _sm = savgol_filter(_gw_sig, window_length=_w, polyorder=_po)
+            _res = _gw_sig - _sm
+
+            # Lag-1 autocorrelation of the residual (white noise → ~0)
+            _rc = _res - np.nanmean(_res)
+            _den = float(np.nansum(_rc * _rc))
+            _r1 = float(np.nansum(_rc[:-1] * _rc[1:]) / _den) if _den > 0 else 0.0
+
+            _noise = float(np.nanstd(_res))
+            _npk = int(len(find_peaks(np.nan_to_num(_sm, nan=0.0), prominence=_gw_prom)[0]))
+
+            _gw_rows.append({
+                "SG window": _w,
+                "Peaks": _npk,
+                "Noise σ (resid)": f"{_noise:.4f}",
+                "Residual r₁": f"{_r1:+.3f}",
+                "OK?": "⚠️ leak" if _r1 > _gw_acthr else "✅",
+            })
+            _gw_numeric.append({"w": _w, "peaks": _npk, "noise": _noise, "r1": _r1})
+
+            # Only plot a handful to keep the figure readable
+            if _gi % max(1, len(_gw_windows) // 8) == 0 or _w == _gw_windows[-1]:
+                _gw_fig.add_trace(go.Scatter(
+                    x=wn_arr, y=_sm, mode="lines", name=f"w={_w}",
+                    line=dict(color=_gw_pal[_gi % len(_gw_pal)], width=1.8),
+                ))
+
+        _gw_fig.update_layout(
+            xaxis_title="Wavenumber (cm⁻¹)", yaxis_title="−ln(depl)",
+            title=f"SG window sweep — m/z {selected_mz:.1f}",
+            height=460, legend=dict(orientation="h", y=1.02, xanchor="right", x=1),
+        )
+        st.plotly_chart(_gw_fig, use_container_width=True)
+
+        if _gw_rows:
+            st.markdown("**Summary — noise, peaks & residual whiteness vs. SG window**")
+            st.dataframe(pd.DataFrame(_gw_rows), hide_index=True, use_container_width=True)
+
+            # ── Auto-select optimal SG window ─────────────────────────────────
+            # PRIMARY criterion — peak-count knee: as the window grows, spurious
+            # noise peaks vanish and the detected-peak count drops, then settles
+            # on a plateau (the real peaks). The optimum is the SMALLEST window
+            # that reaches this plateau (minimal smoothing that kills the noise).
+            # GUARD — signal leakage: a *positive* residual autocorrelation
+            # (r₁ > threshold) means real peak structure is leaking into the
+            # residual = over-smoothing. Never recommend at/after that onset.
+            _gw_r1s = np.array([r["r1"]    for r in _gw_numeric])
+            _gw_ws  = np.array([r["w"]     for r in _gw_numeric])
+            _gw_pks = np.array([r["peaks"] for r in _gw_numeric])
+            _N = len(_gw_numeric)
+
+            # Onset of over-smoothing (first window with positive leakage)
+            _leak = np.where(_gw_r1s > _gw_acthr)[0]
+            _leak_idx = int(_leak[0]) if len(_leak) > 0 else _N
+
+            # Peak-count knee: first index whose count equals the count two
+            # steps later (a short stable run), searched only up to the leak.
+            _search_hi = max(1, _leak_idx)
+            _knee = None
+            for _k in range(_search_hi - 1):
+                _run_end = min(_k + 2, _N - 1)
+                if _gw_pks[_k] == _gw_pks[_run_end]:
+                    _knee = _k
+                    break
+
+            if _knee is None:
+                # No clear plateau before leakage → take the window just before
+                # leakage onset (or the middle of the swept range as a fallback).
+                _knee = (_leak_idx - 1) if _leak_idx < _N else _N // 2
+                _knee = max(0, min(_knee, _N - 1))
+                _reason = ("just before over-smoothing sets in"
+                           if _leak_idx < _N else
+                           "mid-range (no clear plateau or leakage detected)")
+            else:
+                _reason = "peak count plateaus here (noise peaks gone, real peaks intact)"
+
+            _gw_opt = int(_gw_ws[_knee])
+            _leak_note = (f" Over-smoothing (signal leak) begins at w={int(_gw_ws[_leak_idx])}."
+                          if _leak_idx < _N else
+                          " No over-smoothing detected within the swept range.")
+
+            st.success(
+                f"**Suggested SG window: {_gw_opt}** "
+                f"(polyorder {min(int(_gw_poly), _gw_opt - 1)}) — {_reason}; "
+                f"detects {int(_gw_pks[_knee])} peaks, residual r₁ = {_gw_r1s[_knee]:+.3f}."
+                f"{_leak_note}"
+            )
+            if st.button(f"⬆️ Apply SG window = {_gw_opt} (and enable smoothing)",
+                         key="_mid_gw_apply"):
+                st.session_state["_mid_sg"] = True
+                st.session_state["_mid_sg_w"] = _gw_opt
+                st.rerun()
 
 
 # ════════════════════════════════════════════════════════════════════════════════
@@ -747,46 +1091,169 @@ if your_wn is not None or ref_spectra:
 
 
 # ════════════════════════════════════════════════════════════════════════════════
-# SECTION 5 — MOLECULAR STRUCTURE
+# SECTION 5 — MOLECULAR STRUCTURES (multi-molecule, per-mass persistent)
 # ════════════════════════════════════════════════════════════════════════════════
 st.markdown("---")
-st.markdown("## 5. Molecular Structure")
+st.markdown("## 5. Molecular Structures")
 
-_struct_col1, _struct_col2 = st.columns(2)
+# Each mass gets its own isolated SMILES list so switching masses never
+# overwrites candidates you've already entered for another mass.
+# Rows carry a STABLE id so widget keys never shift when a row is removed.
+import re as _re5
+_mz_tag       = str(selected_mz).replace('.', 'p')
+_mz_key       = f"_mid_smiles_{_mz_tag}"       # list of {id, name, smiles}
+_mz_dismissed = f"_mid_dismissed_{_mz_tag}"    # set of ref names the user removed
+_mz_counter   = f"_mid_rowid_{_mz_tag}"        # monotonic id counter
 
-with _struct_col1:
-    st.markdown("**Upload structure image (PNG/SVG)**")
+def _clean_ref_name(_raw):
+    _n = _raw
+    for _pfx in ("DFT: ", "NIST: "):
+        if _n.startswith(_pfx):
+            _n = _n[len(_pfx):]
+    _n = _re5.sub(r"\s*\[CAS[^\]]*\]", "", _n).strip()
+    _n = _re5.sub(r"\.(jdx|dx|out|log|csv|stk)$", "", _n, flags=_re5.IGNORECASE).strip()
+    return _n
+
+# ── Init state for this mass ─────────────────────────────────────────────────
+if _mz_counter not in st.session_state:
+    st.session_state[_mz_counter] = 0
+if _mz_dismissed not in st.session_state:
+    st.session_state[_mz_dismissed] = set()
+
+def _new_row(name="", smiles=""):
+    _rid = st.session_state[_mz_counter]
+    st.session_state[_mz_counter] += 1
+    return {"id": _rid, "name": name, "smiles": smiles}
+
+if _mz_key not in st.session_state:
+    _seed = [_new_row(name=_clean_ref_name(_rs["name"]))
+             for _rs in ref_spectra if _clean_ref_name(_rs["name"])]
+    st.session_state[_mz_key] = _seed if _seed else [_new_row()]
+
+_slist = st.session_state[_mz_key]
+
+# ── Migrate rows from older versions that have no 'id' ───────────────────────
+for _e in _slist:
+    if "id" not in _e:
+        _e["id"] = st.session_state[_mz_counter]
+        st.session_state[_mz_counter] += 1
+
+# ── Auto-add newly uploaded refs (skip ones the user dismissed) ──────────────
+_present = {e["name"] for e in _slist}
+for _rs in ref_spectra:
+    _rn = _clean_ref_name(_rs["name"])
+    if _rn and _rn not in _present and _rn not in st.session_state[_mz_dismissed]:
+        _blank = next((e for e in _slist if not e["name"] and not e["smiles"]), None)
+        if _blank is not None:
+            _blank["name"] = _rn
+        else:
+            _slist.append(_new_row(name=_rn))
+        _present.add(_rn)
+
+# ── Add / clear controls ──────────────────────────────────────────────────────
+_sadd_col1, _sadd_col2, _sadd_col3 = st.columns([2, 1, 1])
+with _sadd_col1:
+    st.markdown(f"**Candidate molecules for m/z {selected_mz:.1f}** — add one row per isomer")
+with _sadd_col2:
+    if st.button("➕ Add molecule", key=f"_mid_add_mol_{_mz_tag}"):
+        _slist.append(_new_row())
+        st.rerun()
+with _sadd_col3:
+    if st.button("🗑️ Clear all", key=f"_mid_clear_mols_{_mz_tag}"):
+        # Dismiss every current ref-derived name so they don't auto-return
+        st.session_state[_mz_dismissed].update(e["name"] for e in _slist if e["name"])
+        st.session_state[_mz_key] = [_new_row()]
+        st.rerun()
+
+# ── Editable rows (keyed by stable id) ───────────────────────────────────────
+_to_remove = None
+for _mentry in _slist:
+    _rid = _mentry["id"]
+    _rc1, _rc2, _rc3 = st.columns([2, 4, 1])
+    with _rc1:
+        _mentry["name"] = st.text_input(
+            "Label", value=_mentry["name"],
+            placeholder="Candidate",
+            key=f"_mid_mol_name_{_mz_tag}_{_rid}",
+            label_visibility="collapsed",
+        )
+    with _rc2:
+        _mentry["smiles"] = st.text_input(
+            "SMILES", value=_mentry["smiles"],
+            placeholder="e.g. c1cccc2ccccc12  (naphthalene)",
+            key=f"_mid_mol_smiles_{_mz_tag}_{_rid}",
+            label_visibility="collapsed",
+        )
+    with _rc3:
+        if len(_slist) > 1:
+            if st.button("✕", key=f"_mid_mol_del_{_mz_tag}_{_rid}", help="Remove this row"):
+                _to_remove = _rid
+
+if _to_remove is not None:
+    _removed = next((e for e in _slist if e["id"] == _to_remove), None)
+    if _removed and _removed["name"]:
+        # Remember the name so the auto-add loop won't bring it back
+        st.session_state[_mz_dismissed].add(_removed["name"])
+    st.session_state[_mz_key] = [e for e in _slist if e["id"] != _to_remove]
+    st.rerun()
+
+# ── Render grid of structures ─────────────────────────────────────────────────
+_valid_mols = []  # (index, label, mol, formula, exact_mass, png_bytes)
+
+if HAS_RDKIT:
+    _nonempty = [e for e in _slist if e["smiles"].strip()]
+    if _nonempty:
+        _ncols = min(len(_nonempty), 4)
+        _grid_cols = st.columns(_ncols)
+        for _gi, _entry in enumerate(_nonempty):
+            _label = _entry["name"].strip() or f"Candidate {_gi + 1}"
+            try:
+                _mol = Chem.MolFromSmiles(_entry["smiles"].strip())
+                if _mol is None:
+                    raise ValueError("Invalid SMILES")
+                _img = Draw.MolToImage(_mol, size=(320, 240))
+                _buf = io.BytesIO()
+                _img.save(_buf, format="PNG")
+                _png = _buf.getvalue()
+                _mw  = Descriptors.ExactMolWt(_mol)
+                _mf  = Chem.rdMolDescriptors.CalcMolFormula(_mol)
+                _valid_mols.append((_gi, _label, _mol, _mf, _mw, _png))
+                with _grid_cols[_gi % _ncols]:
+                    st.image(_img, caption=f"**{_label}**", use_container_width=True)
+                    st.caption(f"{_mf} | {_mw:.4f} Da")
+            except Exception as _se:
+                with _grid_cols[_gi % _ncols]:
+                    st.error(f"{_label}: {_se}")
+    else:
+        st.info("Enter at least one SMILES string above to render structures.")
+else:
+    st.info("Install `rdkit` to enable SMILES → structure rendering.")
+
+# ── Pick active structures for export / composite figure ─────────────────────
+if _valid_mols:
+    _mol_labels = [f"{v[1]} ({v[3]})" for v in _valid_mols]
+    _active_labels = st.multiselect(
+        "Structures for export (used in saved PNG & composite figure) — pick one or more, or leave blank for all",
+        options=_mol_labels,
+        default=_mol_labels,
+        key="_mid_active_mol",
+    )
+    # Empty selection → treat as All
+    _export_mols = [v for v in _valid_mols if f"{v[1]} ({v[3]})" in (_active_labels or _mol_labels)]
+    # Keep first selected as the legacy single-image key (used by composite figure fallback)
+    if _export_mols:
+        st.session_state["_mid_structure_img"] = _export_mols[0][5]
+    st.session_state["_mid_export_mols"] = _export_mols
+elif "_mid_struct_img_upload" in st.session_state:
+    pass  # keep previously uploaded image
+
+# ── Fallback: upload image directly ──────────────────────────────────────────
+with st.expander("📁 Or upload a structure image directly (PNG/JPG/SVG)"):
     _struct_img = st.file_uploader("Structure image", type=["png", "jpg", "jpeg", "svg"],
-                                    key="_mid_struct_img")
+                                    key="_mid_struct_img_upload")
     if _struct_img:
         st.image(_struct_img, caption="Uploaded structure", width=300)
         st.session_state["_mid_structure_img"] = _struct_img.getvalue()
-
-with _struct_col2:
-    st.markdown("**Or generate from SMILES**")
-    if HAS_RDKIT:
-        _smiles = st.text_input("SMILES string", key="_mid_smiles",
-                                 placeholder="c1cccc2ccccc12  (naphthalene)")
-        if _smiles:
-            try:
-                mol = Chem.MolFromSmiles(_smiles)
-                if mol is not None:
-                    img = Draw.MolToImage(mol, size=(400, 300))
-                    st.image(img, caption=f"SMILES: {_smiles}", width=300)
-                    # Save to session
-                    buf = io.BytesIO()
-                    img.save(buf, format="PNG")
-                    st.session_state["_mid_structure_img"] = buf.getvalue()
-                    # Compute properties
-                    _mw = Descriptors.ExactMolWt(mol)
-                    _mf = Chem.rdMolDescriptors.CalcMolFormula(mol)
-                    st.caption(f"**{_mf}** — Exact mass: {_mw:.4f} Da")
-                else:
-                    st.error("Invalid SMILES")
-            except Exception as _e:
-                st.error(f"RDKit error: {_e}")
-    else:
-        st.info("Install `rdkit` to enable SMILES → structure rendering.")
 
 
 # ════════════════════════════════════════════════════════════════════════════════
@@ -806,20 +1273,8 @@ with _v_col2:
 _chosen_formula = st.session_state.get("_mid_chosen_formula", "")
 
 def _get_default_output_dir():
-    """Resolve the default output directory from session state or defaults.ini."""
-    _file_dir = st.session_state.get("file_directory", "")
-    if not _file_dir:
-        _defaults_file = r'./.streamlit/defaults.ini'
-        if os.path.exists(_defaults_file):
-            _cfg = configparser.ConfigParser()
-            _cfg.read(_defaults_file)
-            try:
-                _file_dir = _cfg.get('Import Data', 'file_directory')
-            except configparser.Error:
-                pass
-    if not _file_dir:
-        return ""
-    return str(Path(_file_dir) / "output")
+    """Default output directory for mass assignments."""
+    return r"/Users/danialmoh/Library/CloudStorage/OneDrive-StockholmUniversity(2)/OneDrive-StockholmUniversity/FELIX Data/Mass_Assignment"
 
 _default_out = _get_default_output_dir()
 _output_path = st.text_input(
@@ -893,23 +1348,93 @@ if st.button("💾 Save Assignment", type="primary", key="_mid_save"):
                 _stick_df.to_csv(_stick_path, index=False)
                 _saved_files.append(str(_stick_path.name))
 
-        # 3) Comparison plot PNG
+        # 3) Comparison plot PNG — mirrors Section 4 settings exactly
         if _exp_wn is not None:
             try:
-                _fig_s, _ax_s = plt.subplots(figsize=(10, 5))
-                _yr_s = _exp_int / np.nanmax(np.abs(_exp_int)) if np.nanmax(np.abs(_exp_int)) > 0 else _exp_int
-                _ax_s.plot(_exp_wn, _yr_s, color="#d62728", lw=2, label="Experimental")
+                # ── Read Section 4 settings (with safe fallbacks) ────────────
+                _s4_smooth    = locals().get("_smooth_ref", _sg_on)
+                _s4_smooth_w  = locals().get("_smooth_ref_w", _sg_w)
+                _s4_norm      = locals().get("_normalize", True)
+                _s4_ridge     = locals().get("_ridge", False)
+                _s4_ridge_gap = locals().get("_ridge_gap", 1.0)
+                _s4_peaks     = locals().get("_show_peaks", True)
+                _s4_peak_prom = locals().get("_peak_prom_pct", 0.05)
+
+                # ── Helpers matching Section 4 ────────────────────────────────
+                def _s4_norm_fn(y):
+                    if not _s4_norm:
+                        return np.asarray(y, dtype=float)
+                    a = np.asarray(y, dtype=float)
+                    f = a[np.isfinite(a)]
+                    if len(f) == 0 or np.ptp(f) == 0:
+                        return a
+                    return (a - np.nanmin(a)) / np.ptp(f)
+
+                def _s4_smooth_fn(y):
+                    y = np.asarray(y, dtype=float)
+                    if not _s4_smooth or len(y) < _s4_smooth_w:
+                        return y
+                    _wo = _s4_smooth_w if _s4_smooth_w % 2 == 1 else _s4_smooth_w + 1
+                    return savgol_filter(y, window_length=_wo, polyorder=min(3, _wo - 1))
+
+                # ── x-range from experimental ─────────────────────────────────
+                _save_xmin = float(np.nanmin(_exp_wn))
+                _save_xmax = float(np.nanmax(_exp_wn))
+
+                # ── Figure height: taller for ridge so traces don't squash ────
+                _n_traces = 1 + len(ref_spectra)
+                _fig_h_save = max(5, 2.5 + _n_traces * 1.2) if _s4_ridge else 5
+                _fig_s, _ax_s = plt.subplots(figsize=(10, _fig_h_save))
+
+                # ── Build traces list: (label, wn, y_raw, color) ─────────────
+                _save_traces = []
+                _exp_smoothed = _s4_smooth_fn(_exp_int)
+                _save_traces.append(("Experimental", _exp_wn, _exp_smoothed, "#d62728"))
+
                 for _ri, _rs in enumerate(ref_spectra):
                     _c = _palette[(_ri + 1) % len(_palette)]
                     _rwn = np.asarray(_rs["wn"])
                     _rint = np.asarray(_rs["intensity"], dtype=float)
-                    _rint_n = _rint / np.nanmax(np.abs(_rint)) if np.nanmax(np.abs(_rint)) > 0 else _rint
-                    _ax_s.plot(_rwn, _rint_n, color=_c, lw=1.5, label=_rs["name"][:40])
+                    _rmask = (_rwn >= _save_xmin) & (_rwn <= _save_xmax)
+                    _rwn = _rwn[_rmask]
+                    _rint = _rint[_rmask]
+                    if len(_rint) == 0:
+                        continue
+                    _save_traces.append((_rs["name"][:40], _rwn, _rint, _c))
+
+                # ── Plot each trace with ridge offset ─────────────────────────
+                for _ti, (_tlabel, _twn, _ty_raw, _tc) in enumerate(_save_traces):
+                    _ty = _s4_norm_fn(_ty_raw)
+                    _off = _ti * _s4_ridge_gap if _s4_ridge else 0
+                    _ax_s.plot(_twn, _ty + _off, color=_tc, lw=2 if _ti == 0 else 1.5,
+                               label=_tlabel)
+                    # Ridge: draw a zero-baseline per trace
+                    if _s4_ridge:
+                        _ax_s.axhline(_off, color=_tc, lw=0.5, ls="--", alpha=0.3)
+                    # Peak tick marks on reference traces
+                    if _ti > 0 and _s4_peaks and len(_ty) > 3:
+                        _pv = _s4_peak_prom * float(np.nanmax(_ty) - np.nanmin(_ty))
+                        _rp, _ = find_peaks(np.nan_to_num(_ty, nan=0),
+                                            prominence=max(_pv, 1e-6))
+                        for _pi in _rp:
+                            _ax_s.axvline(_twn[_pi], color=_tc, ls=":", lw=0.8, alpha=0.5)
+                            _ax_s.annotate(f"{_twn[_pi]:.0f}",
+                                           xy=(_twn[_pi], _ty[_pi] + _off),
+                                           fontsize=6, color=_tc,
+                                           ha="center", va="bottom", rotation=90)
+
+                _ylabel = "Intensity"
+                if _s4_norm:
+                    _ylabel += " (norm.)"
+                if _s4_ridge:
+                    _ylabel += " [stacked]"
+
+                _ax_s.set_xlim(_save_xmin, _save_xmax)
                 _ax_s.set_xlabel("Wavenumber (cm⁻¹)", fontsize=11)
-                _ax_s.set_ylabel("Normalized Intensity", fontsize=11)
+                _ax_s.set_ylabel(_ylabel, fontsize=11)
                 _ax_s.set_title(f"m/z {selected_mz:.1f} — {_chosen_formula or '?'} ({_verdict})",
                                 fontsize=12, fontweight="bold")
-                _ax_s.legend(fontsize=8)
+                _ax_s.legend(fontsize=8, loc="upper right")
                 _ax_s.grid(True, alpha=0.3)
                 _fig_s.tight_layout()
                 _plot_path = _assign_dir / "comparison_plot.png"
@@ -919,11 +1444,53 @@ if st.button("💾 Save Assignment", type="primary", key="_mid_save"):
             except Exception as _pe:
                 st.warning(f"⚠️ Could not save plot: {_pe}")
 
-        # 4) Structure image if available
+        # 4) Structure images — save every valid SMILES entry + a grid PNG
         if "_mid_structure_img" in st.session_state:
-            _struct_path = _assign_dir / "structure.png"
+            _struct_path = _assign_dir / "structure_active.png"
             _struct_path.write_bytes(st.session_state["_mid_structure_img"])
-            _saved_files.append("structure.png")
+            _saved_files.append("structure_active.png")
+
+        if HAS_RDKIT:
+            _smiles_entries = st.session_state.get(_mz_key, [])
+            _struct_dir = _assign_dir / "structures"
+            _struct_dir.mkdir(exist_ok=True)
+            _grid_mols, _grid_labels = [], []
+            for _si, _se in enumerate(_smiles_entries):
+                _se_smi = _se.get("smiles", "").strip()
+                _se_lbl = (_se.get("name", "").strip() or f"candidate_{_si + 1}")
+                if not _se_smi:
+                    continue
+                try:
+                    _se_mol = Chem.MolFromSmiles(_se_smi)
+                    if _se_mol is None:
+                        continue
+                    _se_img = Draw.MolToImage(_se_mol, size=(400, 300))
+                    # Sanitise label for filename
+                    import re as _re2
+                    _safe_lbl = _re2.sub(r"[^\w\-]", "_", _se_lbl)[:60]
+                    _se_path = _struct_dir / f"{_safe_lbl}.png"
+                    _se_img.save(_se_path)
+                    _saved_files.append(f"structures/{_safe_lbl}.png")
+                    _grid_mols.append(_se_mol)
+                    _grid_labels.append(
+                        f"{_se_lbl}\n{Chem.rdMolDescriptors.CalcMolFormula(_se_mol)}"
+                    )
+                except Exception:
+                    pass
+
+            # Save a single grid image with all structures
+            if _grid_mols:
+                try:
+                    _ncols_g = min(len(_grid_mols), 4)
+                    _grid_img = Draw.MolsToGridImage(
+                        _grid_mols, molsPerRow=_ncols_g,
+                        subImgSize=(400, 300), legends=_grid_labels,
+                    )
+                    _grid_path = _assign_dir / "structures_grid.png"
+                    _grid_img.save(_grid_path)
+                    _saved_files.append("structures_grid.png")
+                except Exception:
+                    pass
 
         st.success(
             f"✅ Saved m/z {selected_mz:.1f} → {_chosen_formula} ({_verdict})\n\n"
@@ -1029,14 +1596,27 @@ if your_wn is not None:
         ax_ir.set_ylabel("Intensity (norm.)" if _normalize else "Intensity", fontsize=11)
         ax_ir.set_title(f"IR Spectrum — m/z {selected_mz:.1f}", fontsize=12, fontweight="bold")
 
-        # Panel 3: Structure image
+        # Panel 3: Structure image(s) — grid if multiple selected
         if ax_struct is not None and has_struct:
             from PIL import Image
-            _img_data = st.session_state["_mid_structure_img"]
-            _pil = Image.open(io.BytesIO(_img_data))
-            ax_struct.imshow(_pil)
+            _pub_export_mols = st.session_state.get("_mid_export_mols", [])
+            if HAS_RDKIT and len(_pub_export_mols) > 1:
+                # Draw a grid of all selected structures into the panel
+                _pg_mols   = [v[2] for v in _pub_export_mols]
+                _pg_labels = [f"{v[1]}\n{v[3]}" for v in _pub_export_mols]
+                _pg_ncols  = min(len(_pg_mols), 4)
+                _pg_img = Draw.MolsToGridImage(
+                    _pg_mols, molsPerRow=_pg_ncols,
+                    subImgSize=(300, 220), legends=_pg_labels,
+                )
+                ax_struct.imshow(_pg_img)
+            else:
+                _img_data = st.session_state["_mid_structure_img"]
+                _pil = Image.open(io.BytesIO(_img_data))
+                ax_struct.imshow(_pil)
+            _struct_title = "Structures" if len(_pub_export_mols) > 1 else "Structure"
             ax_struct.axis("off")
-            ax_struct.set_title("Structure", fontsize=12, fontweight="bold")
+            ax_struct.set_title(_struct_title, fontsize=12, fontweight="bold")
 
         # Panel 4: Info text (+ legend under it)
         if ax_info is not None:
@@ -1073,3 +1653,119 @@ if your_wn is not None:
         st.download_button("📥 Download Figure", data=_buf.getvalue(),
                             file_name=_pub_fname, mime="image/png", key="_mid_dl_fig")
         plt.close(fig_pub)
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# SECTION 7 — AI MECHANISM PROMPT (data summary for Claude Opus etc.)
+# ════════════════════════════════════════════════════════════════════════════════
+st.markdown("---")
+st.markdown("## 7. AI Mechanism Prompt")
+st.caption(
+    "Auto-builds a copy-paste prompt summarising your *actual* mass spectrum and "
+    "assignments so an LLM can propose reachable product structures for each m/z."
+)
+
+with st.expander("🤖 Build LLM prompt from this dataset", expanded=False):
+    _pp_c1, _pp_c2 = st.columns(2)
+    with _pp_c1:
+        _prec_text = st.text_area(
+            "Precursor SMILES (one per line, `name: SMILES`)",
+            value="Bromobenzene: c1ccccc1Br\n1,2-Dibromopropane: BrCC(Br)C",
+            height=90, key="_mid_prec_smiles",
+        )
+    with _pp_c2:
+        _constraints = st.text_area(
+            "Detection constraints",
+            value=(
+                "Detection is 1+1' REMPI via ArF excimer — only UV-active closed-shell "
+                "aromatic molecules are observed.\n"
+                "Products form in a supersonic free-jet expansion after discharge — "
+                "single-collision regime, no solution chemistry, no high-pressure rearrangements."
+            ),
+            height=90, key="_mid_prompt_constraints",
+        )
+
+    # ── Pull detected peaks + relative intensities from the actual spectrum ──
+    if len(_peaks) > 0:
+        _mz_vals  = _x_disp[_peaks]
+        _int_vals = _y_disp[_peaks]
+        _imax = float(np.nanmax(_int_vals)) if np.nanmax(_int_vals) > 0 else 1.0
+
+        def _intensity_label(_frac):
+            if _frac >= 0.66:
+                return "strong"
+            if _frac >= 0.33:
+                return "medium"
+            if _frac >= 0.10:
+                return "weak"
+            return "trace"
+
+        # Map saved assignments by rounded m/z for annotation
+        _assign_by_mz = {}
+        for _a in st.session_state.get("_mass_assignments", {}).values():
+            try:
+                _assign_by_mz[round(float(_a.get("mz", -1)))] = _a
+            except (TypeError, ValueError):
+                pass
+
+        _order = np.argsort(_mz_vals)
+        _mass_lines, _anchor_lines = [], []
+        for _idx in _order:
+            _m = float(_mz_vals[_idx])
+            _frac = float(_int_vals[_idx]) / _imax
+            _lab = _intensity_label(_frac)
+            _a = _assign_by_mz.get(round(_m))
+            _tag = ""
+            if _a and _a.get("formula"):
+                _verd = _a.get("verdict", "")
+                _tag = f"  ← assigned: {_a['formula']}" + (f" ({_verd})" if _verd else "")
+                _anchor_lines.append(
+                    f"m/z {_m:.0f} = {_a['formula']}"
+                    + (f" [{_verd}]" if _verd else "")
+                    + (f" — {_a['notes']}" if _a.get("notes") else "")
+                )
+            _mass_lines.append(f"m/z {_m:6.1f}  ({_lab}, {_frac*100:4.1f}% of base peak){_tag}")
+
+        _mass_block = "\n".join(_mass_lines)
+        _anchor_block = "\n".join(_anchor_lines) if _anchor_lines else "(none assigned yet)"
+
+        # ── Assemble the full prompt ──
+        _prompt = f"""I am analysing products from an electric-discharge / supersonic-jet experiment and need help proposing reachable product structures for each observed mass.
+
+## 1. Precursor SMILES
+{_prec_text.strip()}
+
+## 2. Complete observed mass list (with relative intensities)
+{_mass_block}
+
+## 3. Known anchor assignments
+{_anchor_block}
+
+## 4. Detection constraints
+{_constraints.strip()}
+
+## What I need from you
+For each observed m/z above:
+- Extract the primary radical fragments from each precursor.
+- Apply known gas-phase radical-combination rules (recombination, HACA, propargyl addition, ring closure).
+- Walk up the mass ladder step by step, keeping consistency with the anchor assignments.
+- Output only the 3–6 structures reachable from MY specific precursor fragments by simple bond-forming steps.
+- Flag which candidates are UV-active (observable here) and which are not.
+- Rank by mechanistic plausibility, and use the relative intensities as a clue to reaction efficiency.
+- Give each candidate as a SMILES string and a one-line mechanistic rationale.
+"""
+        st.markdown("**Generated prompt** — copy or download and paste into Claude Opus:")
+        st.code(_prompt, language="markdown")
+        st.download_button(
+            "📥 Download prompt (.md)", data=_prompt,
+            file_name=f"mechanism_prompt_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
+            mime="text/markdown", key="_mid_dl_prompt",
+        )
+        st.caption(
+            f"Summarised {len(_mass_lines)} detected peaks and "
+            f"{len(_anchor_lines)} anchor assignment(s). Intensities are relative to the "
+            f"base (most intense) detected peak. Adjust peak detection in Section 1 to "
+            f"change which masses are included."
+        )
+    else:
+        st.info("No peaks detected in Section 1 — adjust the peak prominence/distance there first.")

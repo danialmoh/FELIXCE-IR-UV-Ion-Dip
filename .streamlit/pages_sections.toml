@@ -145,3 +145,8 @@ icon = "📚"
 path = ".streamlit/10.0_MassIdentity.py"
 name = "10. Mass Identity Workbench"
 icon = "🧪"
+
+[[pages]]
+path = ".streamlit/11.0_SpectralDecomposition.py"
+name = "11. Spectral Decomposition"
+icon = "🧬"

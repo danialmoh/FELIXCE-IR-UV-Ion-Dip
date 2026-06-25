@@ -622,10 +622,10 @@ if "rempi_baseline_corrected" in st.session_state:
                     cb_title = "log₁₀ Intensity"
 
                 fig_zoom = go.Figure(data=go.Heatmap(
-                    z=Z_plot, x=x_mass_filtered, y=wavelengths,
+                    z=Z_plot, x=x_mass_filtered, y=wavelengths / 2,
                     colorscale='Hot', zmin=zmin_val, zmax=zmax_val,
                     colorbar=dict(title=cb_title),
-                    hovertemplate='Wavelength: %{y:.2f} nm<br>Mass: %{x:.2f} amu<br>Intensity: %{z:.4f}<extra></extra>',
+                    hovertemplate='Wavelength/2: %{y:.2f} nm<br>Mass: %{x:.2f} amu<br>Intensity: %{z:.4f}<extra></extra>',
                 ))
                 if molecule_mass and mass_min_2d <= molecule_mass <= mass_max_2d:
                     fig_zoom.add_vline(x=molecule_mass, line_width=2, line_dash="dash", line_color="cyan")
@@ -634,8 +634,8 @@ if "rempi_baseline_corrected" in st.session_state:
                 if excluded_masses:
                     _title_suffix = f" | excl: {', '.join(f'{m:.0f}' for m in excluded_masses)} amu"
                 fig_zoom.update_layout(
-                    title=f"2D REMPI Action Spectrum (Mass: {mass_min_2d:.1f}-{mass_max_2d:.1f} amu, λ: {wl_min:.1f}-{wl_max:.1f} nm{_title_suffix})",
-                    xaxis_title="Mass (amu)", yaxis_title="Wavelength (nm)",
+                    title=f"2D REMPI Action Spectrum (Mass: {mass_min_2d:.1f}-{mass_max_2d:.1f} amu, λ/2: {wl_min/2:.1f}-{wl_max/2:.1f} nm{_title_suffix})",
+                    xaxis_title="Mass (amu)", yaxis_title="Wavelength / 2 (nm)",
                     height=600, xaxis=dict(showgrid=False), yaxis=dict(showgrid=False),
                 )
                 st.plotly_chart(fig_zoom, use_container_width=True)
@@ -661,15 +661,15 @@ if "rempi_baseline_corrected" in st.session_state:
                             Z_mpl = np.where(Z_filtered > 0, Z_filtered, np.nan)
                             _vmin = 10**zmin_val if zmin_val != 0 else None
                             _vmax = 10**zmax_val if zmax_val != 0 else None
-                            im = ax.pcolormesh(x_mass_filtered, wavelengths, Z_mpl,
+                            im = ax.pcolormesh(x_mass_filtered, wavelengths / 2, Z_mpl,
                                                cmap='hot', shading='auto',
                                                norm=LogNorm(vmin=_vmin, vmax=_vmax))
                         else:
-                            im = ax.pcolormesh(x_mass_filtered, wavelengths, Z_filtered,
+                            im = ax.pcolormesh(x_mass_filtered, wavelengths / 2, Z_filtered,
                                                cmap='hot', shading='auto',
                                                vmin=zmin_val, vmax=zmax_val)
                         ax.set_xlabel('Mass (amu)', fontsize=12)
-                        ax.set_ylabel('Wavelength (nm)', fontsize=12)
+                        ax.set_ylabel('Wavelength / 2 (nm)', fontsize=12)
                         ax.set_title(f'2D REMPI Action Spectrum ({mass_min_2d:.1f}-{mass_max_2d:.1f} amu)', fontsize=14)
                         plt.colorbar(im, ax=ax, label=cb_title)
                         add_plot_to_report_button(
@@ -751,22 +751,23 @@ if "rempi_baseline_corrected" in st.session_state:
                 intensities = Z[mass_indices, :].mean(axis=0).tolist()
                 wavelengths = _parse_wavelengths(present_cols)
 
+                wavelengths_half = wavelengths / 2
                 fig_1d = go.Figure()
                 fig_1d.add_trace(go.Scatter(
-                    x=wavelengths, y=intensities,
+                    x=wavelengths_half, y=intensities,
                     mode='lines', name=f'Mass {target_mass:.1f} amu',
                     line=dict(width=2, color='blue'),
                 ))
                 fig_1d.update_layout(
                     title=f"Action Spectrum for m/z = {target_mass:.1f} ± {mass_tolerance} amu (actual: {avg_mass:.2f} amu)",
-                    xaxis_title="Wavelength (nm)", yaxis_title="Ion Intensity (a.u.)",
+                    xaxis_title="Wavelength / 2 (nm)", yaxis_title="Ion Intensity (a.u.)",
                     height=400, showlegend=True, hovermode='x unified',
                 )
                 fig_1d.add_hline(y=0, line_width=1, line_dash="dash", line_color="gray")
                 st.plotly_chart(fig_1d, use_container_width=True)
-                st.info(f"**Statistics:** Peak intensity: {max(intensities):.4f} at {wavelengths[np.argmax(intensities)]:.2f} nm | Mean: {np.mean(intensities):.4f}")
+                st.info(f"**Statistics:** Peak intensity: {max(intensities):.4f} at {wavelengths_half[np.argmax(intensities)]:.2f} nm (λ/2) | Mean: {np.mean(intensities):.4f}")
 
-                col_exp_1d1, col_exp_1d2 = st.columns(2)
+                col_exp_1d1, col_exp_1d_csv, col_exp_1d2 = st.columns(3)
                 with col_exp_1d1:
                     if st.button("💾 Save 1D Action Spectrum as PNG", key="save_1d_action"):
                         import plotly.io as pio
@@ -779,12 +780,25 @@ if "rempi_baseline_corrected" in st.session_state:
                             st.success(f"✅ Saved to `{filepath}`")
                         else:
                             st.warning("No output directory set")
+                with col_exp_1d_csv:
+                    _csv_1d = pd.DataFrame({
+                        "wavelength_half_nm": wavelengths_half,
+                        "wavelength_raw_nm": wavelengths,
+                        "intensity_au": intensities,
+                    }).to_csv(index=False).encode("utf-8")
+                    st.download_button(
+                        "📥 Download CSV",
+                        data=_csv_1d,
+                        file_name=f"REMPI_1D_action_spectrum_m{target_mass:.1f}.csv",
+                        mime="text/csv",
+                        key="dl_1d_csv",
+                    )
                 with col_exp_1d2:
                     if st.button("📊 Add 1D Action Spectrum to Report", key="report_1d_action"):
                         fig_mpl, ax = plt.subplots(figsize=(10, 4))
-                        ax.plot(wavelengths, intensities, 'b-', marker='o', linewidth=2, markersize=4)
+                        ax.plot(wavelengths_half, intensities, 'b-', marker='o', linewidth=2, markersize=4)
                         ax.axhline(0, color='gray', linestyle='--', linewidth=1)
-                        ax.set_xlabel('Wavelength (nm)', fontsize=12)
+                        ax.set_xlabel('Wavelength / 2 (nm)', fontsize=12)
                         ax.set_ylabel('Ion Intensity (a.u.)', fontsize=12)
                         ax.set_title(f'Action Spectrum for m/z = {target_mass:.1f} ± {mass_tolerance} amu', fontsize=14)
                         ax.grid(alpha=0.3)
@@ -914,19 +928,20 @@ if "rempi_baseline_corrected" in st.session_state:
                     c = colors[idx % len(colors)]
                     offset = idx * _spacing
                     y_shifted = norm_traces[idx] + offset
+                    wl_ridge_half = wavelengths_ridge / 2
                     fig_ridge.add_trace(go.Scatter(
-                        x=np.concatenate([wavelengths_ridge, wavelengths_ridge[::-1]]),
-                        y=np.concatenate([y_shifted, np.full(len(wavelengths_ridge), offset)]),
+                        x=np.concatenate([wl_ridge_half, wl_ridge_half[::-1]]),
+                        y=np.concatenate([y_shifted, np.full(len(wl_ridge_half), offset)]),
                         fill="toself", fillcolor=c, opacity=0.2,
                         line=dict(width=0), showlegend=False, hoverinfo="skip",
                     ))
                     fig_ridge.add_trace(go.Scatter(
-                        x=wavelengths_ridge, y=y_shifted,
+                        x=wl_ridge_half, y=y_shifted,
                         mode="lines", name=labels[idx], line=dict(color=c, width=1.5),
                     ))
 
                 fig_ridge.update_layout(
-                    xaxis_title="Wavelength (nm)",
+                    xaxis_title="Wavelength / 2 (nm)",
                     yaxis=dict(tickvals=[i * _spacing + 0.5 for i in range(n_traces)], ticktext=annotated_labels, title=""),
                     title=f"REMPI Ridge Plot — {n_traces} mass channels",
                     height=max(400, n_traces * 60 + 100), showlegend=False, margin=dict(l=140),
@@ -939,9 +954,9 @@ if "rempi_baseline_corrected" in st.session_state:
                     c = colors[idx % len(colors)]
                     offset = idx * _spacing
                     y_shifted = norm_traces[idx] + offset
-                    ax_r.fill_between(wavelengths_ridge, offset, y_shifted, color=c, alpha=0.2)
-                    ax_r.plot(wavelengths_ridge, y_shifted, color=c, lw=1.5, label=labels[idx])
-                ax_r.set_xlabel("Wavelength (nm)", fontsize=12)
+                    ax_r.fill_between(wavelengths_ridge / 2, offset, y_shifted, color=c, alpha=0.2)
+                    ax_r.plot(wavelengths_ridge / 2, y_shifted, color=c, lw=1.5, label=labels[idx])
+                ax_r.set_xlabel("Wavelength / 2 (nm)", fontsize=12)
                 ax_r.set_yticks([i * _spacing + 0.5 for i in range(n_traces)])
                 ax_r.set_yticklabels(annotated_labels, fontsize=9)
                 ax_r.set_title(f"REMPI Plot - {n_traces} mass channels", fontsize=13, fontweight="bold")

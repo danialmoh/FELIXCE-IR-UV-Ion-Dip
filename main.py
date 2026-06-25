@@ -155,6 +155,8 @@ with st.sidebar:
         st.markdown("#### 🧪 Mass Identity Workbench")
         if st.button("🧪 10.0 Mass Identity Workbench", use_container_width=True, key="btn_mass_identity"):
             st.switch_page(".streamlit/10.0_MassIdentity.py")
+        if st.button("🧬 11.0 Spectral Decomposition", use_container_width=True, key="btn_spectral_decomp"):
+            st.switch_page(".streamlit/11.0_SpectralDecomposition.py")
 
 # Load sections
 nav = get_nav_from_toml(".streamlit/pages_sections.toml")
