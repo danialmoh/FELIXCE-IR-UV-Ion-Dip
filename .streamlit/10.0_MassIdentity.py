@@ -396,12 +396,24 @@ fig_ir = make_subplots(
         "−ln(depletion)",
     ],
 )
+# Raw (non-smoothed) lines drawn first in grey so they sit underneath the smoothed traces
+if _sg_on:
+    fig_ir.add_trace(go.Scatter(x=wn_arr, y=int_without, mode="lines",
+                                 name="Without IR (raw)", line=dict(color="#c9c9c9", width=1)), row=1, col=1)
+    fig_ir.add_trace(go.Scatter(x=wn_arr, y=int_with, mode="lines",
+                                 name="With IR (raw)", line=dict(color="#dcdcdc", width=1)), row=1, col=1)
+    fig_ir.add_trace(go.Scatter(x=wn_arr, y=ln_depletion, mode="lines",
+                                 name="−ln(depl) (raw)", line=dict(color="#c9c9c9", width=1)), row=2, col=1)
+
 fig_ir.add_trace(go.Scatter(x=wn_arr, y=_smooth(int_without), mode="lines",
-                             name="Without IR", line=dict(color="#1f77b4", width=2)), row=1, col=1)
+                             name="Without IR" + (" (smoothed)" if _sg_on else ""),
+                             line=dict(color="#1f77b4", width=2)), row=1, col=1)
 fig_ir.add_trace(go.Scatter(x=wn_arr, y=_smooth(int_with), mode="lines",
-                             name="With IR", line=dict(color="#ff7f0e", width=2, dash="dash")), row=1, col=1)
+                             name="With IR" + (" (smoothed)" if _sg_on else ""),
+                             line=dict(color="#ff7f0e", width=2, dash="dash")), row=1, col=1)
 fig_ir.add_trace(go.Scatter(x=wn_arr, y=_smooth(ln_depletion), mode="lines",
-                             name="−ln(depl)", line=dict(color="#d62728", width=2)), row=2, col=1)
+                             name="−ln(depl)" + (" (smoothed)" if _sg_on else ""),
+                             line=dict(color="#d62728", width=2)), row=2, col=1)
 fig_ir.update_xaxes(title_text="Wavenumber (cm⁻¹)", row=2, col=1)
 fig_ir.update_yaxes(title_text="Signal (a.u.)", row=1, col=1)
 fig_ir.update_yaxes(title_text="−ln(depl)", row=2, col=1)
@@ -446,6 +458,352 @@ st.caption(f"Signal assessment: max |−ln(depl)| = {_max_depl:.4f}, mean = {_me
            f"peak/mean ratio = {_snr:.1f}×")
 if _snr < 3:
     st.warning("⚠️ Low signal-to-noise ratio. This mass channel may not have a real IR signature.")
+
+# ── Band integration & feature robustness ─────────────────────────────────────
+with st.expander("📐 Band Integration & Feature Robustness — how much depletion is real?"):
+    st.caption(
+        "Integrates whole features instead of matching individual peaks. "
+        "**All numbers are computed on the raw −ln(depletion)** — the light outline "
+        "smoothing below is used *only* to find where a band starts and ends, never "
+        "for areas or significance. The noise estimate comes from how much neighbouring "
+        "raw points differ, so the 'is it real?' score doesn't inherit the false "
+        "confidence (or fake peaks) that smoothing can introduce."
+    )
+
+    _bi_c1, _bi_c2, _bi_c3 = st.columns(3)
+    with _bi_c1:
+        _bi_k = st.number_input("Detection threshold (× noise σ)", value=1.5,
+                                min_value=0.5, max_value=5.0, step=0.25, key="_mid_bi_k",
+                                help="A band is outlined where the signal stays above this many σ.")
+    with _bi_c2:
+        _bi_dw = int(st.number_input("Outline window (pts — detection only)", value=1,
+                                     min_value=1, max_value=31, step=2, key="_mid_bi_dw",
+                                     help="Light moving average used ONLY to outline band edges. "
+                                          "Set to 1 to detect on fully raw data."))
+    with _bi_c3:
+        _bi_merge = st.number_input("Merge gaps smaller than (cm⁻¹)", value=15.0,
+                                    min_value=0.0, max_value=100.0, step=5.0, key="_mid_bi_merge")
+
+    _bi_y = np.asarray(ln_depletion, dtype=float)
+    _bi_y = np.nan_to_num(_bi_y, nan=0.0)
+
+    # Noise σ of the RAW trace, from point-to-point differences (median-based, so
+    # real bands — which vary slowly — barely bias it). No smoothing involved.
+    _bi_d = np.diff(_bi_y)
+    _bi_sigma = 1.4826 * float(np.nanmedian(np.abs(_bi_d - np.nanmedian(_bi_d)))) / np.sqrt(2)
+
+    if _bi_sigma <= 0 or len(_bi_y) < 5:
+        st.warning("Not enough data (or zero noise estimate) to run band analysis.")
+    else:
+        st.caption(f"Raw noise floor: σ = {_bi_sigma:.4f} in −ln(depl) "
+                   f"(≈ {(1 - np.exp(-_bi_sigma)) * 100:.1f}% depletion per point).")
+
+        # Outline (detection only) — plain moving average, or raw if window = 1
+        if _bi_dw > 1:
+            _bi_outline = np.convolve(_bi_y, np.ones(_bi_dw) / _bi_dw, mode="same")
+        else:
+            _bi_outline = _bi_y
+
+        # Contiguous regions above threshold
+        _bi_above = _bi_outline > _bi_k * _bi_sigma
+        _bi_segs = []
+        _bi_start = None
+        for _i, _flag in enumerate(_bi_above):
+            if _flag and _bi_start is None:
+                _bi_start = _i
+            elif not _flag and _bi_start is not None:
+                _bi_segs.append([_bi_start, _i - 1])
+                _bi_start = None
+        if _bi_start is not None:
+            _bi_segs.append([_bi_start, len(_bi_above) - 1])
+
+        # Merge segments separated by small gaps
+        _bi_merged = []
+        for _seg in _bi_segs:
+            if _bi_merged and (wn_arr[_seg[0]] - wn_arr[_bi_merged[-1][1]]) < _bi_merge:
+                _bi_merged[-1][1] = _seg[1]
+            else:
+                _bi_merged.append(_seg)
+        # Drop bands with too few points for a meaningful area
+        _bi_merged = [s for s in _bi_merged if (s[1] - s[0] + 1) >= 3]
+
+        if not _bi_merged:
+            st.info("No bands found above the threshold — try lowering it.")
+        else:
+            _bi_rows = []
+            for _i0, _i1 in _bi_merged:
+                _sl = slice(_i0, _i1 + 1)
+                _N = _i1 - _i0 + 1
+                _dnu = (wn_arr[_i1] - wn_arr[_i0]) / max(_N - 1, 1)
+
+                # Area and its uncertainty — raw points, independent-noise model
+                _A = float(np.trapz(_bi_y[_sl], wn_arr[_sl]))
+                _sA = _bi_sigma * _dnu * np.sqrt(_N)
+                _z = _A / _sA if _sA > 0 else 0.0
+
+                # Physically meaningful % depletion: integrated raw ion counts
+                _swo = float(int_without[_sl].sum())
+                _swi = float(int_with[_sl].sum())
+                _d_pct = (1.0 - _swi / _swo) * 100.0 if _swo > 0 else float("nan")
+
+                _ctr = float(wn_arr[_i0 + int(np.argmax(_bi_y[_sl]))])
+                _verdict = "✅ robust" if _z > 5 else ("⚠️ marginal" if _z > 2 else "❌ noise")
+                _bi_rows.append({
+                    "Band (cm⁻¹)": f"{wn_arr[_i0]:.0f}–{wn_arr[_i1]:.0f}",
+                    "Center (cm⁻¹)": f"{_ctr:.0f}",
+                    "Depletion (%)": f"{_d_pct:.1f}",
+                    "Area (cm⁻¹)": f"{_A:.3f} ± {_sA:.3f}",
+                    "z": f"{_z:.1f}",
+                    "Verdict": _verdict,
+                    "_z_num": _z, "_i0": _i0, "_i1": _i1, "_d": _d_pct,
+                })
+            _bi_rows.sort(key=lambda r: -r["_z_num"])
+
+            # Persist detected bands (wn ranges + verdict) for use in Section 4
+            st.session_state["_mid_bands"] = [
+                {
+                    "lo": float(wn_arr[_r["_i0"]]),
+                    "hi": float(wn_arr[_r["_i1"]]),
+                    "center": float(wn_arr[_r["_i0"] + int(np.argmax(_bi_y[_r["_i0"]:_r["_i1"] + 1]))]),
+                    "z": float(_r["_z_num"]),
+                    "depletion_pct": float(_r["_d"]),
+                    "verdict": _r["Verdict"],
+                }
+                for _r in _bi_rows
+            ]
+            st.session_state["_mid_bands_mz"] = float(selected_mz)
+
+            # Plot: raw trace with shaded, verdict-coloured bands
+            _bi_fig = go.Figure()
+            _bi_fig.add_trace(go.Scatter(x=wn_arr, y=_bi_y, mode="lines", name="−ln(depl) raw",
+                                         line=dict(color="#888888", width=1)))
+            if _bi_dw > 1:
+                _bi_fig.add_trace(go.Scatter(x=wn_arr, y=_bi_outline, mode="lines",
+                                             name=f"outline (w={_bi_dw}, detection only)",
+                                             line=dict(color="#1f77b4", width=1, dash="dot")))
+            _bi_fig.add_hline(y=_bi_k * _bi_sigma, line_width=1, line_dash="dash",
+                              line_color="black",
+                              annotation_text=f"{_bi_k:g}σ", annotation_position="top left")
+            _bi_colors = {"✅ robust": "rgba(44,160,44,0.25)",
+                          "⚠️ marginal": "rgba(255,165,0,0.25)",
+                          "❌ noise": "rgba(214,39,40,0.15)"}
+            for _r in _bi_rows:
+                _bi_fig.add_vrect(x0=wn_arr[_r["_i0"]], x1=wn_arr[_r["_i1"]],
+                                  fillcolor=_bi_colors[_r["Verdict"]], line_width=0,
+                                  annotation_text=f"{_r['_d']:.0f}% (z={_r['_z_num']:.1f})",
+                                  annotation_position="top", annotation_font_size=9)
+            _bi_fig.update_layout(height=380, xaxis_title="Wavenumber (cm⁻¹)",
+                                  yaxis_title="−ln(depl)",
+                                  legend=dict(orientation="h", y=1.05))
+            st.plotly_chart(_bi_fig, use_container_width=True)
+
+            _bi_df = pd.DataFrame([{k: v for k, v in r.items() if not k.startswith("_")}
+                                   for r in _bi_rows])
+            st.dataframe(_bi_df, hide_index=True, use_container_width=True)
+            st.caption(
+                "Focus interpretation on ✅ bands (z > 5); treat ⚠️ (2 < z < 5) as tentative. "
+                "The z-score is valid because it is computed on raw, uncorrelated points. "
+                "Note: only the *edges* of each band depend on the detection outline — if a "
+                "⚠️ band disappears when you set the outline window to 1, don't trust it."
+            )
+            st.download_button(
+                "📥 Download band table (CSV)",
+                data=_bi_df.to_csv(index=False).encode("utf-8"),
+                file_name=f"band_integration_mz{selected_mz:.1f}.csv", mime="text/csv",
+                key="_mid_bi_dl",
+            )
+
+# ════════════════════════════════════════════════════════════════════════════════
+# BATCH MASS VERDICT SUMMARY — run the same band test on every detected mass
+# ════════════════════════════════════════════════════════════════════════════════
+
+with st.expander("Generate verdicts for all detected masses", expanded=False):
+    _bv_c1, _bv_c2, _bv_c3 = st.columns(3)
+    with _bv_c1:
+        _bv_hw = st.number_input("Half-width (amu)", value=0.3, min_value=0.05,
+                                 max_value=2.0, step=0.05, key="_mid_bv_hw")
+        _bv_k = st.number_input("Detection threshold (× σ)", value=1.5, min_value=0.5,
+                                max_value=5.0, step=0.25, key="_mid_bv_k")
+    with _bv_c2:
+        _bv_dw = int(st.number_input("Outline window (pts)", value=1, min_value=1,
+                                     max_value=31, step=2, key="_mid_bv_dw"))
+        _bv_merge = st.number_input("Merge gaps (cm⁻¹)", value=15.0, min_value=0.0,
+                                    max_value=100.0, step=5.0, key="_mid_bv_merge")
+    with _bv_c3:
+        _bv_iso = st.checkbox("Integrate isotopic peaks", value=False, key="_mid_bv_iso")
+        _bv_iso_sp = st.number_input("Isotope spacing (amu)", value=2.0, min_value=0.5,
+                                     max_value=10.0, step=0.5, key="_mid_bv_iso_sp",
+                                     disabled=not _bv_iso)
+        _bv_iso_n = int(st.number_input("Number of peaks", value=2, min_value=1, max_value=8,
+                                        step=1, key="_mid_bv_iso_n", disabled=not _bv_iso))
+
+    if not detected_mz_list:
+        st.warning("No detected masses yet. Adjust peak detection in Section 1.")
+
+    if st.button("▶️ Run batch verdict", key="_mid_bv_run", disabled=not bool(detected_mz_list)):
+        _bv_rows = []
+        _wn_arr_bv = np.array(sorted(unique_wavenumbers), dtype=float)
+        _n_total = len(detected_mz_list)
+        _prog = st.progress(0.0, text="Evaluating masses...")
+        for _j, _mz in enumerate(detected_mz_list):
+            _centers_bv = ([_mz + _k * _bv_iso_sp for _k in range(_bv_iso_n)]
+                           if (_bv_iso and _bv_iso_n > 1) else [_mz])
+            _mask_bv = _build_iso_mask(_centers_bv, _bv_hw)
+
+            if not _mask_bv.any():
+                _bv_rows.append({
+                    "m/z": _mz,
+                    "Verdict": "no bins",
+                    "max z": 0.0,
+                    "# bands": 0,
+                    "# robust": 0,
+                    "Best band (cm⁻¹)": "",
+                    "Depletion (%)": float("nan"),
+                    "noise σ": float("nan"),
+                    "max |−ln(depl)|": float("nan"),
+                })
+                _prog.progress((_j + 1) / _n_total)
+                continue
+
+            _v_wo = np.zeros(len(_wn_arr_bv))
+            _v_wi = np.zeros(len(_wn_arr_bv))
+            for _ii, _wn in enumerate(_wn_arr_bv):
+                _df_bv = compilation[_wn]
+                _v_wo[_ii] = _df_bv.iloc[_mask_bv, plot_col_wo].values.sum()
+                _v_wi[_ii] = _df_bv.iloc[_mask_bv, plot_col_w].values.sum()
+
+            with np.errstate(divide="ignore", invalid="ignore"):
+                _v_ln = -np.log(np.clip(_v_wi / _v_wo, 1e-10, None))
+            _v_ln = np.nan_to_num(_v_ln, nan=0.0)
+
+            _v_d = np.diff(_v_ln)
+            _v_sigma = (1.4826 * float(np.nanmedian(np.abs(_v_d - np.nanmedian(_v_d))))
+                        / np.sqrt(2))
+
+            if _v_sigma <= 0 or len(_v_ln) < 5:
+                _bv_rows.append({
+                    "m/z": _mz,
+                    "Verdict": "no data",
+                    "max z": 0.0,
+                    "# bands": 0,
+                    "# robust": 0,
+                    "Best band (cm⁻¹)": "",
+                    "Depletion (%)": float("nan"),
+                    "noise σ": _v_sigma,
+                    "max |−ln(depl)|": float("nan"),
+                })
+                _prog.progress((_j + 1) / _n_total)
+                continue
+
+            if _bv_dw > 1:
+                _v_outline = np.convolve(_v_ln, np.ones(_bv_dw) / _bv_dw, mode="same")
+            else:
+                _v_outline = _v_ln
+
+            _v_above = _v_outline > _bv_k * _v_sigma
+            _v_segs = []
+            _v_start = None
+            for _vi, _flag in enumerate(_v_above):
+                if _flag and _v_start is None:
+                    _v_start = _vi
+                elif not _flag and _v_start is not None:
+                    _v_segs.append([_v_start, _vi - 1])
+                    _v_start = None
+            if _v_start is not None:
+                _v_segs.append([_v_start, len(_v_above) - 1])
+
+            _v_merged = []
+            for _seg in _v_segs:
+                if _v_merged and (_wn_arr_bv[_seg[0]] - _wn_arr_bv[_v_merged[-1][1]]) < _bv_merge:
+                    _v_merged[-1][1] = _seg[1]
+                else:
+                    _v_merged.append(_seg)
+            _v_merged = [s for s in _v_merged if (s[1] - s[0] + 1) >= 3]
+
+            _n_robust = 0
+            _best_z = 0.0
+            _best_verdict = "no bands"
+            _best_band = ""
+            _best_d = float("nan")
+            for _i0, _i1 in _v_merged:
+                _sl = slice(_i0, _i1 + 1)
+                _N = _i1 - _i0 + 1
+                _dnu = (_wn_arr_bv[_i1] - _wn_arr_bv[_i0]) / max(_N - 1, 1)
+
+                _A = float(np.trapz(_v_ln[_sl], _wn_arr_bv[_sl]))
+                _sA = _v_sigma * _dnu * np.sqrt(_N)
+                _z = _A / _sA if _sA > 0 else 0.0
+
+                _swo = float(_v_wo[_sl].sum())
+                _swi = float(_v_wi[_sl].sum())
+                _d_pct = (1.0 - _swi / _swo) * 100.0 if _swo > 0 else float("nan")
+
+                _ctr = float(_wn_arr_bv[_i0 + int(np.argmax(_v_ln[_sl]))])
+                _verdict = ("✅ robust" if _z > 5 else
+                            ("⚠️ marginal" if _z > 2 else "❌ noise"))
+                if _z > _best_z:
+                    _best_z = _z
+                    _best_verdict = _verdict
+                    _best_band = f"{_wn_arr_bv[_i0]:.0f}–{_wn_arr_bv[_i1]:.0f} (@{_ctr:.0f})"
+                    _best_d = _d_pct
+                if _z > 5:
+                    _n_robust += 1
+
+            _max_abs = float(np.nanmax(np.abs(_v_ln)))
+            _bv_rows.append({
+                "m/z": _mz,
+                "Verdict": _best_verdict if _v_merged else "no bands",
+                "max z": _best_z,
+                "# bands": len(_v_merged),
+                "# robust": _n_robust,
+                "Best band (cm⁻¹)": _best_band,
+                "Depletion (%)": _best_d,
+                "noise σ": _v_sigma,
+                "max |−ln(depl)|": _max_abs,
+            })
+            _prog.progress((_j + 1) / _n_total)
+
+        _prog.empty()
+        _bv_df = pd.DataFrame(_bv_rows)
+        st.session_state["_mid_bv_df"] = _bv_df
+        st.success(f"Batch verdict complete for {_n_total} mass(es).")
+
+    _bv_df = st.session_state.get("_mid_bv_df")
+    if _bv_df is not None:
+        st.markdown("**Verdict table**")
+        st.dataframe(_bv_df, hide_index=True, use_container_width=True)
+
+        _robust = (_bv_df["Verdict"] == "✅ robust").sum()
+        _marginal = (_bv_df["Verdict"] == "⚠️ marginal").sum()
+        _noise = (_bv_df["Verdict"].isin(["❌ noise", "no bands", "no bins", "no data"])).sum()
+        st.caption(
+            f"Summary: {_robust} robust | {_marginal} marginal | {_noise} rejected/noise "
+            f"out of {len(_bv_df)} detected masses. "
+            "Focus assignments on robust masses; use marginal ones only with additional evidence."
+        )
+
+        st.download_button(
+            "📥 Download verdict table (CSV)",
+            data=_bv_df.to_csv(index=False).encode("utf-8"),
+            file_name="mass_verdict_summary.csv", mime="text/csv",
+            key="_mid_bv_dl",
+        )
+
+        # Copy-paste paragraph for the user's report
+        _report_para = (
+            f"A band-integration robustness test (threshold = {_bv_k:g}×σ, "
+            f"outline window = {_bv_dw:d} pts, merge gaps < {_bv_merge:.1f} cm⁻¹, "
+            f"m/z half-width = ±{_bv_hw:.2f} amu"
+            + (f", isotope integration {_bv_iso_n:d} peaks spaced by {_bv_iso_sp:.1f} amu"
+               if (_bv_iso and _bv_iso_n > 1) else "") + 
+            f") was applied to all {len(_bv_df)} detected masses. "
+            f"{_robust} mass channel(s) showed at least one robust depletion band (z > 5), "
+            f"{_marginal} showed only marginal bands (2 < z < 5), and {_noise} "
+            f"showed no statistically significant bands. "
+            "Masses with no robust bands were ruled out as lacking a definitive vibrational signature."
+        )
+        st.text_area("Report-ready paragraph (copy this)", value=_report_para, height=120,
+                     key="_mid_bv_report_para", help="Copy into your paper/report methods section.")
 
 # ── Half-width sweep ──────────────────────────────────────────────────────────
 with st.expander("🔍 Integration half-width sweep — find the optimal value"):
@@ -726,6 +1084,193 @@ with st.expander("🌊 Smoothing (SG window) sweep — avoid fake peaks & over-s
                 st.session_state["_mid_sg"] = True
                 st.session_state["_mid_sg_w"] = _gw_opt
                 st.rerun()
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# SECTION 2b — REMPI CROSS-CHECK (load bundle exported from 8.3)
+# ════════════════════════════════════════════════════════════════════════════════
+st.markdown("---")
+with st.expander("🟣 REMPI Cross-Check — view your REMPI data without leaving this page"):
+    st.caption(
+        "Load a `REMPI_dataset.pkl.gz` bundle exported from **Section 8.3** "
+        "(or reuse REMPI data already in this session) to check the summed mass "
+        "spectrum and a 1D action spectrum for any mass."
+    )
+
+    def _rempi_parse_wl(_cols):
+        _out = []
+        for _c in _cols:
+            _s = str(_c)
+            if _s.startswith("bc_"):
+                _s = _s[3:]
+            try:
+                _out.append(float(_s))
+            except ValueError:
+                _mm = __import__("re").search(r"[\d.]+", _s)
+                _out.append(float(_mm.group()) if _mm else np.nan)
+        return np.array(_out)
+
+    # ── Acquire REMPI data: session state first, else load from pkz ───────────
+    _rempi_x = st.session_state.get("rempi_x_mass")
+    _rempi_df = st.session_state.get("rempi_baseline_corrected")
+    _rempi_mname = st.session_state.get("rempi_molecule_name", "")
+    _rempi_mmass = st.session_state.get("rempi_molecule_mass")
+
+    # Bundle loaded earlier on this page takes precedence if present
+    _rb = st.session_state.get("_mid_rempi_bundle")
+    if _rb is not None:
+        _rempi_x = _rb["x_mass"]
+        _rempi_df = _rb["corrected_df"]
+        _rempi_mname = _rb.get("molecule_name", "")
+        _rempi_mmass = _rb.get("molecule_mass")
+
+    _have_session_rempi = (_rempi_x is not None) and (_rempi_df is not None)
+
+    # ── Auto-load from default path if nothing in session yet ─────────────────
+    _def_dir = st.session_state.get("file_directory", "") or st.session_state.get("rempi_file_directory", "")
+    _def_pkz = ""
+    if _def_dir:
+        _cand = Path(_def_dir) / "output" / "REMPI_dataset.pkl.gz"
+        _def_pkz = str(_cand)
+
+    if not _have_session_rempi and _def_pkz and os.path.isfile(_def_pkz):
+        try:
+            import gzip as _gzip_auto, pickle as _pkl_auto
+            with _gzip_auto.open(_def_pkz, "rb") as _f_auto:
+                _loaded_auto = _pkl_auto.load(_f_auto)
+            st.session_state["_mid_rempi_bundle"] = _loaded_auto
+            _rb = _loaded_auto
+            _rempi_x = _rb["x_mass"]
+            _rempi_df = _rb["corrected_df"]
+            _rempi_mname = _rb.get("molecule_name", "")
+            _rempi_mmass = _rb.get("molecule_mass")
+            _have_session_rempi = True
+        except Exception:
+            pass  # fall through to manual loader below
+
+    if _have_session_rempi:
+        st.success("✅ Using REMPI data currently available "
+                   + ("(loaded bundle)" if _rb is not None else "(live session)"))
+
+    # File loader (always available, e.g. to override or when nothing in session)
+    _rempi_path = st.text_input(
+        "Path to REMPI bundle (.pkl.gz)", value=_def_pkz, key="_mid_rempi_path",
+        help="Exported by Section 8.3 → 'Export REMPI bundle (.pkl.gz)'. "
+             "Auto-loaded from the default location if the file exists.",
+    )
+    if st.button("📥 Load REMPI bundle", key="_mid_rempi_load"):
+        if not _rempi_path or not os.path.exists(_rempi_path):
+            st.error(f"❌ File not found: `{_rempi_path}`")
+        else:
+            try:
+                import gzip, pickle
+                with gzip.open(_rempi_path, "rb") as _f:
+                    _loaded = pickle.load(_f)
+                st.session_state["_mid_rempi_bundle"] = _loaded
+                st.success(f"✅ Loaded REMPI bundle from `{os.path.basename(_rempi_path)}`")
+                st.rerun()
+            except Exception as _e:
+                st.error(f"❌ Failed to load: {_e}")
+
+    if not _have_session_rempi:
+        st.info("No REMPI data loaded yet. Export a bundle from Section 8.3, then load it above.")
+    else:
+        _rempi_x = np.asarray(_rempi_x)
+        _wl_cols = [c for c in _rempi_df.columns if c != "Summed"]
+        _wl_vals = _rempi_parse_wl(_wl_cols)
+
+        # ── Summed mass spectrum ─────────────────────────────────────────────
+        st.markdown("**REMPI summed mass spectrum (baseline-corrected)**")
+        if "Summed" in _rempi_df.columns:
+            _summed = np.asarray(_rempi_df["Summed"].values, dtype=float)
+        else:
+            _summed = _rempi_df[_wl_cols].to_numpy().sum(axis=1)
+
+        _ms_c1, _ms_c2 = st.columns(2)
+        with _ms_c1:
+            _ms_lo = st.number_input("Mass min (amu)", value=float(np.nanmin(_rempi_x)),
+                                     key="_mid_rempi_ms_lo")
+        with _ms_c2:
+            _ms_hi = st.number_input("Mass max (amu)", value=float(np.nanmax(_rempi_x)),
+                                     key="_mid_rempi_ms_hi")
+        _ms_mask = (_rempi_x >= _ms_lo) & (_rempi_x <= _ms_hi)
+
+        _fig_ms = go.Figure()
+        _fig_ms.add_trace(go.Scatter(x=_rempi_x[_ms_mask], y=_summed[_ms_mask],
+                                     mode="lines", line=dict(color="#7b2cbf", width=1.5),
+                                     name="REMPI summed"))
+        # Mark the mass currently selected in Section 2
+        _fig_ms.add_vline(x=selected_mz, line_width=1.5, line_dash="dash",
+                          line_color="green",
+                          annotation_text=f"IR m/z {selected_mz:.1f}",
+                          annotation_position="top")
+        if _rempi_mmass is not None:
+            try:
+                _fig_ms.add_vline(x=float(_rempi_mmass), line_width=1.5, line_dash="dot",
+                                  line_color="orange",
+                                  annotation_text=f"{_rempi_mname} ({float(_rempi_mmass):.0f})",
+                                  annotation_position="bottom")
+            except (TypeError, ValueError):
+                pass
+        _fig_ms.update_layout(height=320, showlegend=False,
+                              xaxis_title="Mass (amu)", yaxis_title="Intensity (a.u.)",
+                              margin=dict(t=20, b=40))
+        st.plotly_chart(_fig_ms, use_container_width=True)
+
+        # ── 1D action spectrum for a chosen mass ─────────────────────────────
+        st.markdown("**1D action spectrum (intensity vs wavelength / 2)**")
+        _as_c1, _as_c2 = st.columns([3, 1])
+        with _as_c1:
+            _as_mass = st.number_input(
+                "Mass to extract (amu)",
+                min_value=float(np.nanmin(_rempi_x)), max_value=float(np.nanmax(_rempi_x)),
+                value=float(np.clip(selected_mz, np.nanmin(_rempi_x), np.nanmax(_rempi_x))),
+                step=0.1, key="_mid_rempi_as_mass",
+                help="Defaults to the m/z selected in Section 2.",
+            )
+        with _as_c2:
+            _as_tol = st.number_input("± tolerance (amu)", min_value=0.1, max_value=10.0,
+                                      value=0.5, step=0.1, key="_mid_rempi_as_tol")
+
+        _as_idx = np.where(np.abs(_rempi_x - _as_mass) <= _as_tol)[0]
+        if len(_as_idx) == 0:
+            st.warning(f"No mass points within ±{_as_tol} amu of {_as_mass:.1f}.")
+        elif len(_wl_cols) == 0:
+            st.warning("No per-wavelength columns found in this REMPI bundle.")
+        else:
+            _Z = _rempi_df[_wl_cols].to_numpy()
+            _as_int = _Z[_as_idx, :].mean(axis=0)
+            _wl_half = _wl_vals / 2
+            _order = np.argsort(_wl_half)
+            _wl_half_s = _wl_half[_order]
+            _as_int_s = np.asarray(_as_int)[_order]
+
+            _fig_as = go.Figure()
+            _fig_as.add_trace(go.Scatter(x=_wl_half_s, y=_as_int_s, mode="lines",
+                                         line=dict(color="#1f77b4", width=2),
+                                         name=f"m/z {_as_mass:.1f}"))
+            _fig_as.add_hline(y=0, line_width=1, line_dash="dash", line_color="gray")
+            _fig_as.update_layout(height=320, showlegend=False,
+                                  xaxis_title="Wavelength / 2 (nm)",
+                                  yaxis_title="Ion intensity (a.u.)",
+                                  margin=dict(t=20, b=40))
+            st.plotly_chart(_fig_as, use_container_width=True)
+
+            _pk = int(np.nanargmax(_as_int_s))
+            st.caption(
+                f"Peak: {np.nanmax(_as_int_s):.4f} at {_wl_half_s[_pk]:.2f} nm (λ/2) "
+                f"| mean {np.nanmean(_as_int_s):.4f} | {len(_as_idx)} mass bins averaged"
+            )
+
+            _as_csv = pd.DataFrame({
+                "wavelength_half_nm": _wl_half_s,
+                "intensity_au": _as_int_s,
+            }).to_csv(index=False).encode("utf-8")
+            st.download_button(
+                "📥 Download action spectrum (CSV)", data=_as_csv,
+                file_name=f"REMPI_action_m{_as_mass:.1f}.csv", mime="text/csv",
+                key="_mid_rempi_as_dl",
+            )
 
 
 # ════════════════════════════════════════════════════════════════════════════════
@@ -1022,6 +1567,14 @@ if your_wn is not None or ref_spectra:
     # unpack experimental trace (5-tuple, no sparse flag)
     _traces[0] = _traces[0] + (False,) if len(_traces[0]) == 5 else _traces[0]
 
+    # Raw (non-smoothed) experimental IR drawn first, in grey, so it sits underneath.
+    # The experimental trace is index 0 → ridge offset 0, so raw aligns with it.
+    if your_wn is not None and _smooth_ref:
+        fig_cmp.add_trace(go.Scatter(
+            x=your_wn, y=_norm(your_intensity), mode="lines",
+            line=dict(color="#c9c9c9", width=1), name="Your IR (raw)",
+        ))
+
     for _ri, (_tname, _twn, _ty, _tc, _is_ref, _is_sparse) in enumerate(_traces):
         _off = _ri * _ridge_gap if _ridge else 0
         if _is_sparse:
@@ -1088,6 +1641,137 @@ if your_wn is not None or ref_spectra:
         if _peak_rows:
             with st.expander(f"📍 Detected reference peaks ({len(_peak_rows)})"):
                 st.dataframe(pd.DataFrame(_peak_rows), width='stretch', hide_index=True)
+
+    # ── Band-matched reference filter ─────────────────────────────────────────
+    with st.expander("🎯 Keep only references matching detected bands"):
+        st.caption(
+            "Uses the bands found in **Section 2 → Band Integration**. A reference is "
+            "kept only if at least one of its peaks lands inside a detected band window. "
+            "Upload many DFT/NIST files and only the relevant ones are overlaid."
+        )
+        _bands = st.session_state.get("_mid_bands", [])
+        _bands_mz = st.session_state.get("_mid_bands_mz")
+
+        if not _bands:
+            st.info("No detected bands yet. Open **Section 2 → 📐 Band Integration** first "
+                    "to detect bands for this mass.")
+        elif not ref_spectra:
+            st.info("Upload reference spectra above to filter them against the detected bands.")
+        else:
+            if _bands_mz is not None and abs(float(_bands_mz) - float(selected_mz)) > 1e-6:
+                st.warning(f"⚠️ Bands were detected for m/z {_bands_mz:.1f}, but the current "
+                           f"mass is {selected_mz:.1f}. Re-run band integration for this mass.")
+
+            _bm_c1, _bm_c2, _bm_c3 = st.columns(3)
+            with _bm_c1:
+                _bm_which = st.radio("Use bands", ["Robust only", "Robust + marginal", "All"],
+                                     index=0, key="_mid_bm_which")
+            with _bm_c2:
+                _bm_tol = st.number_input("Match tolerance (cm⁻¹)", value=10.0, min_value=0.0,
+                                          max_value=50.0, step=1.0, key="_mid_bm_tol",
+                                          help="A peak counts as matching if it falls within "
+                                               "the band window widened by this tolerance.")
+            with _bm_c3:
+                _bm_prom = st.number_input("Ref peak prominence (%)", value=5.0, min_value=0.5,
+                                           max_value=50.0, step=0.5, key="_mid_bm_prom") / 100.0
+
+            if _bm_which == "Robust only":
+                _sel_bands = [b for b in _bands if b["verdict"].startswith("✅")]
+            elif _bm_which == "Robust + marginal":
+                _sel_bands = [b for b in _bands if not b["verdict"].startswith("❌")]
+            else:
+                _sel_bands = list(_bands)
+
+            if not _sel_bands:
+                st.warning("No bands of the selected quality. Try a lower quality filter.")
+            else:
+                _wins = [(b["lo"] - _bm_tol, b["hi"] + _bm_tol) for b in _sel_bands]
+
+                def _peaks_in_bands(_wn, _it):
+                    _wn = np.asarray(_wn, dtype=float)
+                    _it = np.asarray(_it, dtype=float)
+                    if len(_it) < 4:
+                        return []
+                    _n = _norm(_it)
+                    _pv = _bm_prom * float(np.nanmax(_n) - np.nanmin(_n))
+                    _pk, _ = find_peaks(np.nan_to_num(_n, nan=0), prominence=max(_pv, 1e-6))
+                    _hits = []
+                    for _pi in _pk:
+                        _pw = _wn[_pi]
+                        for _bi, (_wlo, _whi) in enumerate(_wins):
+                            if _wlo <= _pw <= _whi:
+                                _hits.append((_pw, _bi))
+                                break
+                    return _hits
+
+                _matched, _match_rows = [], []
+                for _s in ref_spectra:
+                    _hits = _peaks_in_bands(_s["wn"], _s["intensity"])
+                    if _hits:
+                        _matched.append(_s)
+                        _bset = sorted({f"{_sel_bands[_bi]['center']:.0f}" for _, _bi in _hits})
+                        _match_rows.append({
+                            "Reference": _s["name"][:50],
+                            "Matched bands (cm⁻¹)": ", ".join(_bset),
+                            "# peaks in bands": len(_hits),
+                        })
+
+                st.markdown(
+                    f"**{len(_matched)} of {len(ref_spectra)} references** match "
+                    f"{len(_sel_bands)} band window(s)."
+                )
+
+                if not _matched:
+                    st.info("No references had peaks inside the detected bands. "
+                            "Try widening the tolerance or relaxing the band quality.")
+                else:
+                    st.dataframe(pd.DataFrame(_match_rows), hide_index=True,
+                                 use_container_width=True)
+
+                    _bm_norm_stack = st.checkbox("Ridge (stacked) layout", value=True,
+                                                 key="_mid_bm_ridge")
+                    _bm_fig = go.Figure()
+                    _bm_pal = ["#1f77b4", "#ff7f0e", "#2ca02c", "#9467bd", "#8c564b",
+                               "#e377c2", "#bcbd22", "#17becf", "#d62728", "#7f7f7f"]
+
+                    # Shade the band windows
+                    for _b in _sel_bands:
+                        _bm_fig.add_vrect(x0=_b["lo"], x1=_b["hi"],
+                                          fillcolor="rgba(44,160,44,0.12)", line_width=0,
+                                          annotation_text=f"{_b['center']:.0f}",
+                                          annotation_position="top", annotation_font_size=9)
+
+                    # Experimental trace at offset 0
+                    if your_wn is not None:
+                        _bm_fig.add_trace(go.Scatter(
+                            x=your_wn, y=_norm(your_intensity), mode="lines",
+                            name="Your IR (−ln depl)", line=dict(color="#d62728", width=2)))
+
+                    for _mi, _s in enumerate(_matched):
+                        _mwn = np.asarray(_s["wn"], dtype=float)
+                        _mit = np.asarray(_s["intensity"], dtype=float)
+                        if _xmin is not None:
+                            _mm = (_mwn >= _xmin) & (_mwn <= _xmax)
+                            _mwn, _mit = _mwn[_mm], _mit[_mm]
+                        _off = (_mi + 1) * 1.0 if _bm_norm_stack else 0
+                        _bm_fig.add_trace(go.Scatter(
+                            x=_mwn, y=_norm(_mit) + _off, mode="lines",
+                            name=_s["name"][:40],
+                            line=dict(color=_bm_pal[_mi % len(_bm_pal)], width=1.5)))
+
+                    _bm_fig.update_layout(
+                        height=500, xaxis_title="Wavenumber (cm⁻¹)",
+                        yaxis_title="Intensity" + (" (stacked)" if _bm_norm_stack else ""),
+                        title=f"Band-matched references — m/z {selected_mz:.1f}",
+                        xaxis=dict(range=_layout_xrange),
+                        legend=dict(orientation="h", y=1.02, xanchor="right", x=1))
+                    st.plotly_chart(_bm_fig, use_container_width=True)
+
+                    st.download_button(
+                        "📥 Download match table (CSV)",
+                        data=pd.DataFrame(_match_rows).to_csv(index=False).encode("utf-8"),
+                        file_name=f"band_matched_refs_mz{selected_mz:.1f}.csv",
+                        mime="text/csv", key="_mid_bm_dl")
 
 
 # ════════════════════════════════════════════════════════════════════════════════
@@ -1402,6 +2086,11 @@ if st.button("💾 Save Assignment", type="primary", key="_mid_save"):
                         continue
                     _save_traces.append((_rs["name"][:40], _rwn, _rint, _c))
 
+                # Raw (non-smoothed) experimental drawn first in grey (offset 0)
+                if _s4_smooth:
+                    _ax_s.plot(_exp_wn, _s4_norm_fn(_exp_int), color="#c9c9c9",
+                               lw=1, label="Experimental (raw)")
+
                 # ── Plot each trace with ridge offset ─────────────────────────
                 for _ti, (_tlabel, _twn, _ty_raw, _tc) in enumerate(_save_traces):
                     _ty = _s4_norm_fn(_ty_raw)
@@ -1569,6 +2258,10 @@ if your_wn is not None:
         _pub_exp = _smooth_spectrum(your_wn, your_intensity) if _smooth_ref else your_intensity
         _yr = _norm(_pub_exp) if _normalize else _pub_exp
         _pub_off_0 = 0  # experimental is trace index 0
+        # Raw (non-smoothed) experimental drawn first in grey (offset 0)
+        if _smooth_ref:
+            _yr_raw = _norm(your_intensity) if _normalize else np.asarray(your_intensity, dtype=float)
+            ax_ir.plot(your_wn, _yr_raw, color="#c9c9c9", lw=1, label="Experimental (raw)")
         ax_ir.plot(your_wn, _yr + (_pub_off_0 * _ridge_gap if _ridge else 0),
                    color="#d62728", lw=2, label="Experimental")
         _pub_xmin, _pub_xmax = float(np.nanmin(your_wn)), float(np.nanmax(your_wn))

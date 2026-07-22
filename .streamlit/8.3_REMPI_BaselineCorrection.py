@@ -1026,3 +1026,34 @@ if "rempi_baseline_corrected" in st.session_state:
                 else:
                     st.warning("No output directory set")
 
+    # ── Export REMPI bundle (.pkl.gz) for the Mass Identity Workbench (10.0) ──
+    st.markdown("#### Export REMPI bundle for Mass Identity Workbench (10.0)")
+    st.caption(
+        "Saves a compact `.pkl.gz` containing the mass axis, baseline-corrected "
+        "data and molecule info. Load it in **Section 10.0** to check REMPI data "
+        "without returning here."
+    )
+    if st.button("📦 Export REMPI bundle (.pkl.gz)", width='stretch', key="export_rempi_pkz"):
+        import gzip, pickle
+        x_mass = st.session_state.get("rempi_x_mass")
+        if x_mass is None:
+            st.error("Mass axis not found. Please register parameters first.")
+        else:
+            file_directory = st.session_state.get("rempi_file_directory", "")
+            if not file_directory:
+                st.warning("No output directory set")
+            else:
+                bundle = {
+                    "x_mass": np.asarray(x_mass),
+                    "corrected_df": corrected_df,
+                    "molecule_mass": st.session_state.get("rempi_molecule_mass"),
+                    "molecule_name": st.session_state.get("rempi_molecule_name", ""),
+                }
+                output_path = Path(file_directory) / "output"
+                output_path.mkdir(parents=True, exist_ok=True)
+                filepath = output_path / "REMPI_dataset.pkl.gz"
+                with gzip.open(filepath, "wb") as f:
+                    pickle.dump(bundle, f, protocol=pickle.HIGHEST_PROTOCOL)
+                st.success(f"✅ Exported REMPI bundle to `{filepath}`")
+                st.info("📌 In **Section 10.0**, open the *REMPI Cross-Check* panel and load this file.")
+
