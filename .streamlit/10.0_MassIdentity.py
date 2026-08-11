@@ -45,6 +45,88 @@ st.caption(
 )
 
 # ════════════════════════════════════════════════════════════════════════════════
+# AXIS HELPERS — dense ticks with an eV value under every label
+# ════════════════════════════════════════════════════════════════════════════════
+_CM1_TO_EV = 1.239841984e-4   # eV per cm⁻¹  (E[eV] = ν̃[cm⁻¹] × hc/e)
+_NM_EV = 1239.841984          # E[eV] = _NM_EV / λ[nm]
+
+
+def _dense_tickvals(lo, hi, spacing):
+    """Tick positions from lo→hi on a multiple of `spacing`."""
+    if hi < lo:
+        lo, hi = hi, lo
+    _start = np.ceil(lo / spacing) * spacing
+    return np.arange(_start, hi + spacing * 1e-6, spacing)
+
+
+def _wn_ticktext(vals):
+    """Two-line labels: wavenumber over its eV equivalent (for Plotly)."""
+    return [f"{v:.0f}<br>{v * _CM1_TO_EV:.3f} eV" for v in vals]
+
+
+def _wl_ticktext(vals):
+    """Two-line labels: wavelength over its photon-energy eV (for Plotly)."""
+    return [(f"{v:.1f}<br>{_NM_EV / v:.2f} eV" if v > 0 else f"{v:.1f}")
+            for v in vals]
+
+
+def _apply_wn_plotly(fig, lo, hi, spacing=50.0, **kw):
+    """Wavenumber x-axis: ticks every `spacing` cm⁻¹ (plain labels, no eV)."""
+    _vals = _dense_tickvals(lo, hi, spacing)
+    fig.update_xaxes(tickmode="array", tickvals=_vals,
+                     ticktext=[f"{v:.0f}" for v in _vals],
+                     tickfont=dict(size=9), **kw)
+
+
+def _apply_wl_plotly(fig, lo, hi, **kw):
+    """Wavelength x-axis: adaptive-density ticks with eV under each nm."""
+    _span = abs(hi - lo)
+    if _span <= 10:
+        _spacing = 0.5
+    elif _span <= 25:
+        _spacing = 1.0
+    elif _span <= 50:
+        _spacing = 2.0
+    else:
+        _spacing = 5.0
+    _vals = _dense_tickvals(lo, hi, _spacing)
+    fig.update_xaxes(tickmode="array", tickvals=_vals, ticktext=_wl_ticktext(_vals),
+                     tickfont=dict(size=8), **kw)
+
+
+def _apply_wn_mpl(ax, spacing=50.0, fontsize=7):
+    """Matplotlib wavenumber axis: ticks every `spacing` cm⁻¹ (plain labels)."""
+    from matplotlib.ticker import MultipleLocator, FuncFormatter
+    ax.xaxis.set_major_locator(MultipleLocator(spacing))
+    ax.xaxis.set_minor_locator(MultipleLocator(spacing / 2.0))
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _p: f"{x:.0f}"))
+    ax.tick_params(axis="x", labelsize=fontsize)
+    ax.set_xlabel("Wavenumber (cm⁻¹)", fontsize=10)
+
+
+def _apply_wl_mpl(ax, fontsize=7):
+    """Matplotlib wavelength axis: adaptive-density ticks + eV under each.
+    Call AFTER set_xlim so the tick range is known."""
+    from matplotlib.ticker import MultipleLocator, FuncFormatter
+    _lo, _hi = ax.get_xlim()
+    _span = abs(_hi - _lo)
+    if _span <= 10:
+        _spacing = 0.5
+    elif _span <= 25:
+        _spacing = 1.0
+    elif _span <= 50:
+        _spacing = 2.0
+    else:
+        _spacing = 5.0
+    ax.xaxis.set_major_locator(MultipleLocator(_spacing))
+    ax.xaxis.set_minor_locator(MultipleLocator(_spacing / 2.0))
+    ax.xaxis.set_major_formatter(
+        FuncFormatter(lambda x, _p: (f"{x:.1f}\n{_NM_EV / x:.2f} eV"
+                                     if x > 0 else f"{x:.1f}")))
+    ax.tick_params(axis="x", labelsize=fontsize)
+    ax.set_xlabel("Wavelength (nm)  /  Energy (eV)", fontsize=10)
+
+# ════════════════════════════════════════════════════════════════════════════════
 # PERSISTENT ASSIGNMENT STORE — loads from JSON on disk at startup
 # ════════════════════════════════════════════════════════════════════════════════
 def _assignments_json_path():
@@ -129,6 +211,16 @@ def parse_jdx(file_content):
         x_values = np.linspace(firstx, lastx, len(y_values))
     else:
         x_values = np.arange(len(y_values), dtype=float)
+
+    # Convert wavelength units to wavenumbers if necessary
+    _xunits = meta.get("XUNITS", "").upper().replace("-", "")
+    if _xunits in ("MICROMETERS", "MICRON", "MICRONS", "UM"):
+        x_values = 10000.0 / x_values
+        # Sort into ascending wavenumber order
+        _order = np.argsort(x_values)
+        x_values = x_values[_order]
+        y_values = [y_values[i] for i in _order]
+
     return meta, np.array(x_values), np.array(y_values)
 
 
@@ -418,11 +510,17 @@ fig_ir.update_xaxes(title_text="Wavenumber (cm⁻¹)", row=2, col=1)
 fig_ir.update_yaxes(title_text="Signal (a.u.)", row=1, col=1)
 fig_ir.update_yaxes(title_text="−ln(depl)", row=2, col=1)
 fig_ir.update_layout(height=550, showlegend=True, legend=dict(orientation="h", y=1.02))
+# Ticks every 50 cm⁻¹ (plain labels, no eV for IR axes)
+if len(wn_arr) > 1:
+    _apply_wn_plotly(fig_ir, float(np.nanmin(wn_arr)), float(np.nanmax(wn_arr)),
+                     spacing=50.0, row=2, col=1)
 st.plotly_chart(fig_ir, use_container_width=True)
 
 # Store the extracted spectrum for later use (raw, unsmoothed for independent smoothing in Section 4)
 st.session_state["_mid_your_wn"] = wn_arr
 st.session_state["_mid_your_intensity"] = ln_depletion
+st.session_state["_mid_int_without"] = int_without
+st.session_state["_mid_int_with"] = int_with
 st.session_state["_mid_selected_mz"] = selected_mz
 
 # ── Download extracted IR spectrum (raw + smoothed) ───────────────────────────
@@ -595,6 +693,8 @@ with st.expander("📐 Band Integration & Feature Robustness — how much deplet
             _bi_fig.update_layout(height=380, xaxis_title="Wavenumber (cm⁻¹)",
                                   yaxis_title="−ln(depl)",
                                   legend=dict(orientation="h", y=1.05))
+            _apply_wn_plotly(_bi_fig, float(np.nanmin(wn_arr)), float(np.nanmax(wn_arr)),
+                             spacing=50.0)
             st.plotly_chart(_bi_fig, use_container_width=True)
 
             _bi_df = pd.DataFrame([{k: v for k, v in r.items() if not k.startswith("_")}
@@ -857,14 +957,20 @@ with st.expander("🔍 Integration half-width sweep — find the optimal value")
         _sw_max = np.nanmax(np.abs(_sw_dep))
         _sw_mean = np.nanmean(np.abs(_sw_dep))
         _sw_snr = _sw_max / _sw_mean if _sw_mean > 0 else 0
+        # Captured mass-peak area = total without-IR ion counts inside the window.
+        # This rises monotonically with the half-width and plateaus once the
+        # entire mass peak is enclosed — a robust, artifact-proof coverage metric.
+        _sw_area = float(np.nansum(_sw_wo))
         _sw_summary_rows.append({
             "Half-width (amu)": f"{_sw:.3f}",
             "m/z bins": _sw_bins,
+            "captured peak area": f"{_sw_area:.4g}",
             "max |−ln(depl)|": f"{_sw_max:.4f}",
             "mean |−ln(depl)|": f"{_sw_mean:.4f}",
             "peak/mean SNR": f"{_sw_snr:.1f}",
         })
-        _sw_numeric.append({"hw": _sw, "bins": _sw_bins, "snr": _sw_snr, "maxd": _sw_max})
+        _sw_numeric.append({"hw": _sw, "bins": _sw_bins, "snr": _sw_snr,
+                            "maxd": _sw_max, "area": _sw_area})
 
         _sw_y = _sw_dep.copy()
         if _sw_norm:
@@ -887,6 +993,9 @@ with st.expander("🔍 Integration half-width sweep — find the optimal value")
         height=480,
         legend=dict(orientation="h", y=1.02, xanchor="right", x=1),
     )
+    if len(wn_arr) > 1:
+        _apply_wn_plotly(fig_sw, float(np.nanmin(wn_arr)), float(np.nanmax(wn_arr)),
+                         spacing=50.0)
     st.plotly_chart(fig_sw, use_container_width=True)
 
     if _sw_summary_rows:
@@ -894,49 +1003,110 @@ with st.expander("🔍 Integration half-width sweep — find the optimal value")
         _sw_df = pd.DataFrame(_sw_summary_rows)
         st.dataframe(_sw_df, hide_index=True, use_container_width=True)
 
-        # ── Auto-select optimal half-width (plateau-only) ─────────────────
-        # The window must be wide enough to capture the FULL mass peak. As the
-        # half-width grows, max|−ln(depl)| rises then flattens once the whole
-        # peak is integrated. Beyond that it only adds noise / neighbour
-        # contamination. So the optimum is the SMALLEST width at which
-        # max|−ln(depl)| stops growing (gain to next step < 5 %).
+        # ── Auto-select optimal half-width (peak-area knee) ───────────────
+        # The window must be wide enough to capture the FULL mass peak, then
+        # stop. We select on the CAPTURED MASS-PEAK AREA (total without-IR ion
+        # counts inside the window). As the window widens it first fills the
+        # peak (large area gains) and then only accumulates a slowly-sloping
+        # baseline / neighbouring-peak tail (small, roughly constant gains).
         #
-        # NOTE: peak/mean "SNR" is deliberately NOT used — it is biased toward
-        # the narrowest window (fewer m/z bins → fewer counts → spikier trace
-        # → artificially high max/mean). It is shown for information only.
+        # Because that baseline tail means the area never truly flattens, a
+        # "fraction of the maximum area" rule drifts out into the tail and picks
+        # far too wide a window. Instead we find the KNEE: the smallest width
+        # after which each further step adds < `_knee_gain` of the current area
+        # (peak captured; only baseline creep remains), requiring at least
+        # `_min_frac` of the peak to already be enclosed as a safety floor.
+        #
+        # NOTE: max|−ln(depl)| is deliberately NOT used for selection — a single
+        # sharp artifact (e.g. a spike near 700 cm⁻¹) makes it non-monotonic and
+        # can hijack the choice. peak/mean "SNR" is likewise biased toward narrow
+        # windows. Both are shown for information only.
         if len(_sw_numeric) >= 2:
-            _sw_maxds = np.array([r["maxd"] for r in _sw_numeric])
-            _sw_hws   = np.array([r["hw"]   for r in _sw_numeric])
-            _sw_snrs  = np.array([r["snr"]  for r in _sw_numeric])
+            _sw_maxds  = np.array([r["maxd"] for r in _sw_numeric])
+            _sw_hws    = np.array([r["hw"]   for r in _sw_numeric])
+            _sw_snrs   = np.array([r["snr"]  for r in _sw_numeric])
+            _sw_areas  = np.array([r["area"] for r in _sw_numeric], dtype=float)
 
-            # First width where the next step adds < 5 % more max|−ln(depl)|.
-            # Default to the widest if it never plateaus within the swept range.
+            # Cumulative-max so a noisy dip cannot distort the monotonic area.
+            _sw_area_env = np.maximum.accumulate(_sw_areas)
+            _sw_area_full = _sw_area_env[-1]
+
+            _knee_gain = 0.02   # next step adds < 2 % → peak captured
+            _min_frac  = 0.90   # but only after ≥ 90 % of the peak is enclosed
+
+            # Knee: smallest width whose step to the next adds < _knee_gain,
+            # provided at least _min_frac of the fully-captured area is reached.
             _opt_idx = len(_sw_numeric) - 1
-            for _si in range(len(_sw_maxds) - 1):
-                _gain = (_sw_maxds[_si + 1] - _sw_maxds[_si]) / max(_sw_maxds[_si], 1e-12)
-                if _gain < 0.05:
+            for _si in range(len(_sw_area_env) - 1):
+                _gain = ((_sw_area_env[_si + 1] - _sw_area_env[_si])
+                         / max(_sw_area_env[_si], 1e-12))
+                _frac_here = (_sw_area_env[_si] / _sw_area_full
+                              if _sw_area_full > 0 else 0.0)
+                if _gain < _knee_gain and _frac_here >= _min_frac:
                     _opt_idx = _si
                     break
 
-            _opt_hw  = float(_sw_hws[_opt_idx])
-            _opt_max = float(_sw_maxds[_opt_idx])
-            _plateaued = _opt_idx < len(_sw_numeric) - 1
+            _opt_hw   = float(_sw_hws[_opt_idx])
+            _opt_max  = float(_sw_maxds[_opt_idx])
+            _opt_area = float(_sw_areas[_opt_idx])
+            _opt_frac = (_sw_area_env[_opt_idx] / _sw_area_full) if _sw_area_full > 0 else 0.0
+            _kneed = _opt_idx < len(_sw_numeric) - 1
 
-            if _plateaued:
+            if _kneed:
                 st.success(
                     f"**Suggested optimal half-width: ±{_opt_hw:.3f} amu** "
-                    f"(max|−ln(depl)| = {_opt_max:.4f} — plateaus here; "
-                    f"wider windows add <5 % signal, only noise/contamination)"
+                    f"(captures {_opt_frac * 100:.0f} % of the mass-peak area; "
+                    f"the peak is enclosed here — wider windows add <{_knee_gain * 100:.0f} % "
+                    f"more area, i.e. only baseline / neighbour tail)"
                 )
             else:
                 st.warning(
                     f"**Suggested optimal half-width: ±{_opt_hw:.3f} amu** "
-                    f"(max|−ln(depl)| = {_opt_max:.4f}) — *no plateau reached within "
-                    f"the swept range; try increasing the max half-width.*"
+                    f"(captures {_opt_frac * 100:.0f} % of the swept peak area) — "
+                    f"*no clear knee within the swept range; the peak may still be "
+                    f"growing (increase the max half-width) or be masked by a strong "
+                    f"baseline slope.*"
                 )
             st.caption(
-                f"ℹ️ peak/mean ratio at this width = {float(_sw_snrs[_opt_idx]):.1f}× "
+                f"ℹ️ At this width: max|−ln(depl)| = {_opt_max:.4f}, "
+                f"peak/mean ratio = {float(_sw_snrs[_opt_idx]):.1f}× "
                 f"(shown for reference only; not used for selection)."
+            )
+
+            _opt_mask = _build_iso_mask(iso_centers, _opt_hw)
+            _opt_pad = max(1.0, 1.5 * _opt_hw)
+            _opt_mz_lo = max(float(np.min(x_mass)), min(iso_centers) - _opt_hw - _opt_pad)
+            _opt_mz_hi = min(float(np.max(x_mass)), max(iso_centers) + _opt_hw + _opt_pad)
+            _opt_display = (x_mass >= _opt_mz_lo) & (x_mass <= _opt_mz_hi)
+            _opt_fig = go.Figure()
+            _opt_fig.add_trace(go.Scatter(
+                x=x_mass[_opt_display], y=ms_y[_opt_display], mode="lines",
+                name="Mass spectrum", line=dict(color="#1f77b4", width=1.5),
+            ))
+            _opt_fig.add_trace(go.Scatter(
+                x=x_mass[_opt_mask], y=ms_y[_opt_mask], mode="markers",
+                name=f"Included bins ({int(_opt_mask.sum())})",
+                marker=dict(color="#d62728", size=6),
+            ))
+            for _center in iso_centers:
+                _opt_fig.add_vrect(
+                    x0=_center - _opt_hw, x1=_center + _opt_hw,
+                    fillcolor="rgba(214,39,40,0.18)", line_width=1,
+                    line_color="#d62728",
+                )
+                _opt_fig.add_vline(
+                    x=_center, line_width=1, line_dash="dash", line_color="#d62728",
+                    annotation_text=f"{_center:.3f}", annotation_position="top",
+                )
+            _opt_fig.update_layout(
+                title=f"Mass-spectrum coverage at suggested ±{_opt_hw:.3f} amu",
+                xaxis_title="m/z", yaxis_title="Intensity (a.u.)", height=360,
+                legend=dict(orientation="h", y=1.02),
+            )
+            st.plotly_chart(_opt_fig, use_container_width=True)
+            st.caption(
+                "Red shading and markers show every m/z bin included in the suggested "
+                "integration window" + ("s." if len(iso_centers) > 1 else ".")
             )
 
             if st.button(f"⬆️ Apply {_opt_hw:.3f} amu as integration half-width",
@@ -1024,6 +1194,9 @@ with st.expander("🌊 Smoothing (SG window) sweep — avoid fake peaks & over-s
             title=f"SG window sweep — m/z {selected_mz:.1f}",
             height=460, legend=dict(orientation="h", y=1.02, xanchor="right", x=1),
         )
+        if len(wn_arr) > 1:
+            _apply_wn_plotly(_gw_fig, float(np.nanmin(wn_arr)), float(np.nanmax(wn_arr)),
+                             spacing=50.0)
         st.plotly_chart(_gw_fig, use_container_width=True)
 
         if _gw_rows:
@@ -1174,10 +1347,21 @@ with st.expander("🟣 REMPI Cross-Check — view your REMPI data without leavin
 
     if not _have_session_rempi:
         st.info("No REMPI data loaded yet. Export a bundle from Section 8.3, then load it above.")
+        # No REMPI available this run — clear any stale cached arrays so the
+        # Save Assignment block does not write an outdated action spectrum.
+        st.session_state["_mid_rempi_ready"] = None
     else:
         _rempi_x = np.asarray(_rempi_x)
         _wl_cols = [c for c in _rempi_df.columns if c != "Summed"]
         _wl_vals = _rempi_parse_wl(_wl_cols)
+
+        # Cache the essentials so the Save Assignment block can extract the
+        # action spectrum for the assigned mass without re-loading the bundle.
+        st.session_state["_mid_rempi_ready"] = {
+            "x": _rempi_x,
+            "Z": _rempi_df[_wl_cols].to_numpy(),
+            "wl_half": _wl_vals / 2.0,
+        }
 
         # ── Summed mass spectrum ─────────────────────────────────────────────
         st.markdown("**REMPI summed mass spectrum (baseline-corrected)**")
@@ -1218,7 +1402,7 @@ with st.expander("🟣 REMPI Cross-Check — view your REMPI data without leavin
         st.plotly_chart(_fig_ms, use_container_width=True)
 
         # ── 1D action spectrum for a chosen mass ─────────────────────────────
-        st.markdown("**1D action spectrum (intensity vs wavelength / 2)**")
+        st.markdown("**1D action spectrum (intensity vs wavelength)**")
         _as_c1, _as_c2 = st.columns([3, 1])
         with _as_c1:
             _as_mass = st.number_input(
@@ -1251,9 +1435,13 @@ with st.expander("🟣 REMPI Cross-Check — view your REMPI data without leavin
                                          name=f"m/z {_as_mass:.1f}"))
             _fig_as.add_hline(y=0, line_width=1, line_dash="dash", line_color="gray")
             _fig_as.update_layout(height=320, showlegend=False,
-                                  xaxis_title="Wavelength / 2 (nm)",
+                                  xaxis_title="Wavelength (nm)  /  Energy (eV)",
                                   yaxis_title="Ion intensity (a.u.)",
                                   margin=dict(t=20, b=40))
+            # Ticks every 0.5/1 nm with photon-energy eV under each label
+            if len(_wl_half_s) > 1:
+                _apply_wl_plotly(_fig_as, float(np.nanmin(_wl_half_s)),
+                                 float(np.nanmax(_wl_half_s)))
             st.plotly_chart(_fig_as, use_container_width=True)
 
             _pk = int(np.nanargmax(_as_int_s))
@@ -1408,21 +1596,40 @@ if _ref_files:
                 _text = _raw.decode("utf-8", errors="replace") if isinstance(_raw, bytes) else _raw
                 freqs, intens, meta = parse_dft_file(_text, _fname)
                 if freqs is not None and len(freqs) > 0:
+                    # Apply harmonic frequency scaling factor
+                    _scale = float(st.session_state.get("_mid_dft_scale", 1.0))
+                    freqs = np.asarray(freqs, dtype=float) * _scale
                     # Broaden the stick spectrum
                     _bw = st.session_state.get("_mid_bw_frac", 0.007)
                     wn_broad, int_broad = broaden_spectrum_felix(freqs, intens, bw_frac=_bw)
                     _dname = f"DFT: {_fname}"
                     if "method" in meta:
                         _dname += f" ({meta['method']})"
+                    if abs(_scale - 1.0) > 1e-9:
+                        _dname += f" ×{_scale:.4f}"
                     ref_spectra.append({"name": _dname, "wn": wn_broad, "intensity": int_broad,
-                                        "source": "DFT", "freqs": freqs, "intens": intens})
-                    st.success(f"🧪 DFT: {_fname} — {len(freqs)} modes → broadened")
+                                        "source": "DFT", "freqs": freqs, "intens": intens,
+                                        "scale": _scale})
+                    st.success(f"🧪 DFT: {_fname} — {len(freqs)} modes → broadened"
+                               + (f" (scaled ×{_scale:.4f})" if abs(_scale - 1.0) > 1e-9 else ""))
                 else:
                     st.warning(f"Could not parse DFT modes from {_fname}")
 
             elif _ext in (".csv", ".txt", ".dat"):
-                _df = pd.read_csv(io.BytesIO(_raw) if isinstance(_raw, bytes) else io.StringIO(_raw),
-                                  sep=None, engine="python")
+                _text = _raw.decode("utf-8", errors="replace") if isinstance(_raw, bytes) else _raw
+                # Skip leading '#' comment lines so files like
+                #   # Freq_MD (cm^-1) Inten_MD (Normalized intensity)
+                #   300.0 3.1340e-03
+                # work without manual editing.
+                _lines = _text.splitlines()
+                _first_data = 0
+                for _line in _lines:
+                    if _line.strip().startswith("#"):
+                        _first_data += 1
+                    else:
+                        break
+                _clean_text = "\n".join(_lines[_first_data:])
+                _df = pd.read_csv(io.StringIO(_clean_text), sep=None, engine="python")
                 if len(_df.columns) >= 2:
                     _csv_wn = _df.iloc[:, 0].values.astype(float)
                     _csv_int = _df.iloc[:, 1].values.astype(float)
@@ -1478,21 +1685,37 @@ if _ref_files:
                     # Fallback to DFT parser (e.g. ORCA .ir.stk)
                     freqs, intens, _ = parse_dft_file(_text, _fname)
                 if freqs is not None and len(freqs) > 0:
+                    _scale = float(st.session_state.get("_mid_dft_scale", 1.0))
+                    freqs = np.asarray(freqs, dtype=float) * _scale
                     _bw = st.session_state.get("_mid_bw_frac", 0.007)
                     wn_broad, int_broad = broaden_spectrum_felix(freqs, intens, bw_frac=_bw)
-                    ref_spectra.append({"name": f"DFT: {_fname}", "wn": wn_broad, "intensity": int_broad,
-                                        "source": "DFT", "freqs": freqs, "intens": intens})
-                    st.success(f"🧪 DFT stick: {_fname} — {len(freqs)} modes → broadened")
+                    _dname = f"DFT: {_fname}"
+                    if abs(_scale - 1.0) > 1e-9:
+                        _dname += f" ×{_scale:.4f}"
+                    ref_spectra.append({"name": _dname, "wn": wn_broad, "intensity": int_broad,
+                                        "source": "DFT", "freqs": freqs, "intens": intens,
+                                        "scale": _scale})
+                    st.success(f"🧪 DFT stick: {_fname} — {len(freqs)} modes → broadened"
+                               + (f" (scaled ×{_scale:.4f})" if abs(_scale - 1.0) > 1e-9 else ""))
 
         except Exception as _e:
             st.warning(f"Could not parse {_fname}: {_e}")
 
-# DFT broadening control
+# DFT broadening / frequency scaling controls
 if any(s.get("source") == "DFT" for s in ref_spectra):
-    _bw_frac = st.number_input("FELIX bandwidth fraction (FWHM/ν)", value=0.007,
-                                min_value=0.001, max_value=0.05, step=0.001,
-                                format="%.4f", key="_mid_bw_frac",
-                                help="Frequency-proportional Gaussian FWHM = bw_frac × ν")
+    _dc1, _dc2 = st.columns(2)
+    with _dc1:
+        _bw_frac = st.number_input("FELIX bandwidth fraction (FWHM/ν)", value=0.007,
+                                    min_value=0.001, max_value=0.05, step=0.001,
+                                    format="%.4f", key="_mid_bw_frac",
+                                    help="Frequency-proportional Gaussian FWHM = bw_frac × ν")
+    with _dc2:
+        _dft_scale = st.number_input("DFT frequency scaling factor", value=1.000,
+                                      min_value=0.500, max_value=1.500, step=0.001,
+                                      format="%.4f", key="_mid_dft_scale",
+                                      help="Multiplies all DFT harmonic frequencies. "
+                                           "1.0000 = no scaling (default). Typical values: "
+                                           "~0.96–0.98 for B3LYP harmonic frequencies.")
 
 # ── Spectral overlay plot ─────────────────────────────────────────────────────
 your_wn = st.session_state.get("_mid_your_wn")
@@ -1551,7 +1774,7 @@ if your_wn is not None or ref_spectra:
 
     if your_wn is not None:
         _your_smoothed = _smooth_spectrum(your_wn, your_intensity)
-        _traces.append(("Your IR (−ln depl)", your_wn, _norm(_your_smoothed), "#d62728", False, False))
+        _traces.append(("Experimental (−ln depl)", your_wn, _norm(_your_smoothed), "#d62728", False, False))
     for _si, _s in enumerate(ref_spectra):
         _c = _palette[(_si + 1) % len(_palette)]
         _ref_wn = np.asarray(_s["wn"])
@@ -1572,7 +1795,7 @@ if your_wn is not None or ref_spectra:
     if your_wn is not None and _smooth_ref:
         fig_cmp.add_trace(go.Scatter(
             x=your_wn, y=_norm(your_intensity), mode="lines",
-            line=dict(color="#c9c9c9", width=1), name="Your IR (raw)",
+            line=dict(color="#c9c9c9", width=1), name="Experimental (raw)",
         ))
 
     for _ri, (_tname, _twn, _ty, _tc, _is_ref, _is_sparse) in enumerate(_traces):
@@ -1616,6 +1839,8 @@ if your_wn is not None or ref_spectra:
         xaxis=dict(range=_layout_xrange),
         legend=dict(orientation="h", y=1.02, xanchor="right", x=1),
     )
+    if _xmin is not None and _xmax > _xmin:
+        _apply_wn_plotly(fig_cmp, _xmin, _xmax, spacing=50.0)
     st.plotly_chart(fig_cmp, use_container_width=True)
 
     # Show detected peak positions in a table
@@ -1745,7 +1970,7 @@ if your_wn is not None or ref_spectra:
                     if your_wn is not None:
                         _bm_fig.add_trace(go.Scatter(
                             x=your_wn, y=_norm(your_intensity), mode="lines",
-                            name="Your IR (−ln depl)", line=dict(color="#d62728", width=2)))
+                            name="Experimental", line=dict(color="#d62728", width=2)))
 
                     for _mi, _s in enumerate(_matched):
                         _mwn = np.asarray(_s["wn"], dtype=float)
@@ -1765,6 +1990,9 @@ if your_wn is not None or ref_spectra:
                         title=f"Band-matched references — m/z {selected_mz:.1f}",
                         xaxis=dict(range=_layout_xrange),
                         legend=dict(orientation="h", y=1.02, xanchor="right", x=1))
+                    if _layout_xrange is not None:
+                        _apply_wn_plotly(_bm_fig, _layout_xrange[0], _layout_xrange[1],
+                                         spacing=50.0)
                     st.plotly_chart(_bm_fig, use_container_width=True)
 
                     st.download_button(
@@ -1772,6 +2000,15 @@ if your_wn is not None or ref_spectra:
                         data=pd.DataFrame(_match_rows).to_csv(index=False).encode("utf-8"),
                         file_name=f"band_matched_refs_mz{selected_mz:.1f}.csv",
                         mime="text/csv", key="_mid_bm_dl")
+
+                    # Persist for the Save Assignment block
+                    st.session_state["_mid_bm_data"] = {
+                        "matched": _matched,
+                        "sel_bands": _sel_bands,
+                        "ridge": _bm_norm_stack,
+                        "xrange": _layout_xrange,
+                        "mz": float(selected_mz),
+                    }
 
 
 # ════════════════════════════════════════════════════════════════════════════════
@@ -1924,10 +2161,21 @@ if _valid_mols:
     )
     # Empty selection → treat as All
     _export_mols = [v for v in _valid_mols if f"{v[1]} ({v[3]})" in (_active_labels or _mol_labels)]
-    # Keep first selected as the legacy single-image key (used by composite figure fallback)
-    if _export_mols:
-        st.session_state["_mid_structure_img"] = _export_mols[0][5]
     st.session_state["_mid_export_mols"] = _export_mols
+
+    # Choose which single structure is the "active" one (used as the single
+    # image in the saved PNG and the A4 page when the grid option is off).
+    if _export_mols:
+        _export_labels = [f"{v[1]} ({v[3]})" for v in _export_mols]
+        _primary_label = st.selectbox(
+            "Active (primary) structure — shown as the single structure in the saved PNG & A4 page",
+            options=_export_labels, key="_mid_primary_mol",
+            help="Pick which structure represents this mass. The A4 page can show "
+                 "just this one, or the full grid (toggle in the Save section).",
+        )
+        _primary = next((v for v in _export_mols
+                         if f"{v[1]} ({v[3]})" == _primary_label), _export_mols[0])
+        st.session_state["_mid_structure_img"] = _primary[5]
 elif "_mid_struct_img_upload" in st.session_state:
     pass  # keep previously uploaded image
 
@@ -1971,6 +2219,31 @@ def _get_output_dir():
         return None
     return Path(_output_path.strip())
 
+_save_bm_plot = st.checkbox("Include band-matched references plot in save",
+                            value=True, key="_mid_save_bm",
+                            help="Save a PNG of the band-matched overlay from Section 4.")
+
+_save_opt_c1, _save_opt_c2 = st.columns(2)
+with _save_opt_c1:
+    _rempi_ma_win = int(st.number_input(
+        "REMPI moving-average window (pts)", value=5, min_value=1, max_value=51,
+        step=2, key="_mid_rempi_ma",
+        help="Window (in points) for the moving-average smoothed REMPI PNG. "
+             "Set to 1 for no smoothing.",
+    ))
+with _save_opt_c2:
+    _save_a4 = st.checkbox(
+        "Save combined A4 page (structure + band-match + REMPI + mass spectrum)",
+        value=True, key="_mid_save_a4",
+        help="Assemble a single vertical A4 PDF + PNG with all four panels.",
+    )
+    _a4_struct_grid = st.checkbox(
+        "Use structure grid in A4 (all selected structures)",
+        value=False, key="_mid_a4_struct_grid",
+        help="Show every selected structure as a grid in the A4 page instead of "
+             "just the single active structure.",
+    )
+
 if st.button("💾 Save Assignment", type="primary", key="_mid_save"):
     _entry = {
         "mz": float(selected_mz),
@@ -2000,6 +2273,18 @@ if st.button("💾 Save Assignment", type="primary", key="_mid_save"):
 
         _saved_files = []
 
+        # Panel data collected for the combined A4 page (populated below).
+        _rempi_panel = None   # {"wl", "raw", "smooth", "win"}
+        _ms_panel = None      # {"x", "y", "lo", "hi", "y_top", "y_at_sel"}
+
+        def _moving_avg(_y, _w):
+            """Simple centred moving average; returns input unchanged if _w<=1."""
+            _y = np.asarray(_y, dtype=float)
+            if _w is None or _w <= 1 or len(_y) < _w:
+                return _y
+            _k = np.ones(int(_w), dtype=float) / float(_w)
+            return np.convolve(_y, _k, mode="same")
+
         # 1) Combined CSV: experimental + interpolated references on same grid
         _exp_wn = st.session_state.get("_mid_your_wn")
         _exp_int = st.session_state.get("_mid_your_intensity")
@@ -2019,6 +2304,60 @@ if st.button("💾 Save Assignment", type="primary", key="_mid_save"):
             _combined_path = _assign_dir / _spectra_fname
             _combined.to_csv(_combined_path, index=False)
             _saved_files.append(_spectra_fname)
+
+        # 1b) Integrated signal CSV + PNG for the selected mass
+        _int_wn = st.session_state.get("_mid_your_wn")
+        _int_without = st.session_state.get("_mid_int_without")
+        _int_with = st.session_state.get("_mid_int_with")
+        _int_sg_on = st.session_state.get("_mid_sg", False)
+        _int_sg_w = st.session_state.get("_mid_sg_w", 5)
+        if _int_wn is not None and _int_without is not None and _int_with is not None:
+            try:
+                def _int_smooth(y):
+                    y = np.asarray(y, dtype=float)
+                    if not _int_sg_on or len(y) < _int_sg_w:
+                        return y
+                    w = _int_sg_w if _int_sg_w % 2 == 1 else _int_sg_w + 1
+                    return savgol_filter(y, window_length=w, polyorder=min(3, w - 1))
+
+                _int_df = pd.DataFrame({
+                    "wavenumber_cm-1": _int_wn,
+                    "int_without_IR": _int_without,
+                    "int_with_IR": _int_with,
+                })
+                if _int_sg_on:
+                    _int_df["int_without_IR_smoothed"] = _int_smooth(_int_without)
+                    _int_df["int_with_IR_smoothed"] = _int_smooth(_int_with)
+                _int_csv_fname = f"integrated_signal_mz{_safe_mz}.csv"
+                _int_df.to_csv(_assign_dir / _int_csv_fname, index=False)
+                _saved_files.append(_int_csv_fname)
+
+                _fig_int, _ax_int = plt.subplots(figsize=(10, 4.5))
+                if _int_sg_on:
+                    _ax_int.plot(_int_wn, _int_without, color="#c9c9c9", lw=1,
+                                label="Without IR (raw)")
+                    _ax_int.plot(_int_wn, _int_with, color="#dcdcdc", lw=1,
+                                label="With IR (raw)")
+                _ax_int.plot(_int_wn, _int_smooth(_int_without), color="#1f77b4", lw=2,
+                            label="Without IR" + (" (smoothed)" if _int_sg_on else ""))
+                _ax_int.plot(_int_wn, _int_smooth(_int_with), color="#ff7f0e", lw=2, ls="--",
+                            label="With IR" + (" (smoothed)" if _int_sg_on else ""))
+                _ax_int.set_xlim(float(np.nanmin(_int_wn)), float(np.nanmax(_int_wn)))
+                _apply_wn_mpl(_ax_int, spacing=50.0, fontsize=7)
+                _ax_int.set_ylabel("Ion intensity (a.u.)", fontsize=11)
+                _ax_int.set_title(
+                    f"Integrated signal — m/z {selected_mz:.1f} — "
+                    f"{_chosen_formula or '?'} ({_verdict})",
+                    fontsize=12, fontweight="bold")
+                _ax_int.legend(fontsize=8, loc="upper right")
+                _ax_int.grid(True, alpha=0.3)
+                _fig_int.tight_layout()
+                _int_png_path = _assign_dir / "integrated_signal.png"
+                _fig_int.savefig(_int_png_path, dpi=300, bbox_inches="tight")
+                plt.close(_fig_int)
+                _saved_files.append("integrated_signal.png")
+            except Exception as _e:
+                st.warning(f"⚠️ Could not save integrated signal: {_e}")
 
         # 2) DFT stick spectra (raw frequencies) if available
         for _ri, _rs in enumerate(ref_spectra):
@@ -2119,7 +2458,7 @@ if st.button("💾 Save Assignment", type="primary", key="_mid_save"):
                     _ylabel += " [stacked]"
 
                 _ax_s.set_xlim(_save_xmin, _save_xmax)
-                _ax_s.set_xlabel("Wavenumber (cm⁻¹)", fontsize=11)
+                _apply_wn_mpl(_ax_s, spacing=50.0, fontsize=7)
                 _ax_s.set_ylabel(_ylabel, fontsize=11)
                 _ax_s.set_title(f"m/z {selected_mz:.1f} — {_chosen_formula or '?'} ({_verdict})",
                                 fontsize=12, fontweight="bold")
@@ -2132,6 +2471,68 @@ if st.button("💾 Save Assignment", type="primary", key="_mid_save"):
                 _saved_files.append("comparison_plot.png")
             except Exception as _pe:
                 st.warning(f"⚠️ Could not save plot: {_pe}")
+
+        # 3b) Band-matched references plot PNG
+        if _save_bm_plot and "_mid_bm_data" in st.session_state:
+            _bmd = st.session_state["_mid_bm_data"]
+            if abs(_bmd.get("mz", 0) - float(selected_mz)) < 1e-6 and _bmd.get("matched"):
+                try:
+                    _bm_matched = _bmd["matched"]
+                    _bm_sel_bands = _bmd["sel_bands"]
+                    _bm_ridge_save = _bmd.get("ridge", True)
+                    _bm_xrange = _bmd.get("xrange")
+                    _bm_pal_s = ["#1f77b4", "#ff7f0e", "#2ca02c", "#9467bd", "#8c564b",
+                                 "#e377c2", "#bcbd22", "#17becf", "#d62728", "#7f7f7f"]
+
+                    _n_bm = 1 + len(_bm_matched)
+                    _bm_fh = max(5, 2.5 + _n_bm * 1.2) if _bm_ridge_save else 5
+                    _fig_bm, _ax_bm = plt.subplots(figsize=(10, _bm_fh))
+
+                    # Shade band windows
+                    for _b in _bm_sel_bands:
+                        _ax_bm.axvspan(_b["lo"], _b["hi"], color="green", alpha=0.10)
+                        _ax_bm.annotate(f"{_b['center']:.0f}", xy=((_b["lo"] + _b["hi"]) / 2, 0),
+                                        fontsize=7, ha="center", va="bottom", color="green")
+
+                    # Experimental trace
+                    _bm_exp_wn = st.session_state.get("_mid_your_wn")
+                    _bm_exp_int = st.session_state.get("_mid_your_intensity")
+                    if _bm_exp_wn is not None:
+                        _ax_bm.plot(_bm_exp_wn, _s4_norm_fn(_bm_exp_int), color="#d62728",
+                                    lw=2, label="Experimental (−ln depl)")
+
+                    for _mi, _s in enumerate(_bm_matched):
+                        _mwn = np.asarray(_s["wn"], dtype=float)
+                        _mit = np.asarray(_s["intensity"], dtype=float)
+                        if _bm_exp_wn is not None:
+                            _mm = (_mwn >= float(np.nanmin(_bm_exp_wn))) & (_mwn <= float(np.nanmax(_bm_exp_wn)))
+                            _mwn, _mit = _mwn[_mm], _mit[_mm]
+                        _off = (_mi + 1) * 1.0 if _bm_ridge_save else 0
+                        _ax_bm.plot(_mwn, _s4_norm_fn(_mit) + _off,
+                                    color=_bm_pal_s[_mi % len(_bm_pal_s)], lw=1.5,
+                                    label=_s["name"][:40])
+                        if _bm_ridge_save:
+                            _ax_bm.axhline(_off, color=_bm_pal_s[_mi % len(_bm_pal_s)],
+                                           lw=0.5, ls="--", alpha=0.3)
+
+                    if _bm_xrange:
+                        _ax_bm.set_xlim(_bm_xrange)
+                    _apply_wn_mpl(_ax_bm, spacing=50.0, fontsize=7)
+                    _ax_bm.set_ylabel("Intensity" + (" (stacked)" if _bm_ridge_save else ""),
+                                      fontsize=11)
+                    _ax_bm.set_title(
+                        f"Band-matched references — m/z {selected_mz:.1f} — "
+                        f"{_chosen_formula or '?'} ({_verdict})",
+                        fontsize=12, fontweight="bold")
+                    _ax_bm.legend(fontsize=8, loc="upper right")
+                    _ax_bm.grid(True, alpha=0.3)
+                    _fig_bm.tight_layout()
+                    _bm_plot_path = _assign_dir / "band_matched_plot.png"
+                    _fig_bm.savefig(_bm_plot_path, dpi=300, bbox_inches="tight")
+                    plt.close(_fig_bm)
+                    _saved_files.append("band_matched_plot.png")
+                except Exception as _bme:
+                    st.warning(f"⚠️ Could not save band-matched plot: {_bme}")
 
         # 4) Structure images — save every valid SMILES entry + a grid PNG
         if "_mid_structure_img" in st.session_state:
@@ -2180,6 +2581,302 @@ if st.button("💾 Save Assignment", type="primary", key="_mid_save"):
                     _saved_files.append("structures_grid.png")
                 except Exception:
                     pass
+
+        # 5) REMPI action spectrum CSV for the assigned mass (if REMPI loaded)
+        _rempi_ready = st.session_state.get("_mid_rempi_ready")
+        if _rempi_ready is not None:
+            try:
+                _rx = np.asarray(_rempi_ready["x"], dtype=float)
+                _rZ = np.asarray(_rempi_ready["Z"])
+                _rwl_half = np.asarray(_rempi_ready["wl_half"], dtype=float)
+                _r_tol = float(st.session_state.get("_mid_rempi_as_tol", 0.5))
+                _r_idx = np.where(np.abs(_rx - float(selected_mz)) <= _r_tol)[0]
+                if len(_r_idx) > 0 and _rZ.ndim == 2 and _rZ.shape[1] == len(_rwl_half):
+                    _r_int = _rZ[_r_idx, :].mean(axis=0)
+                    _r_order = np.argsort(_rwl_half)
+                    _r_wl_s = _rwl_half[_r_order]
+                    _r_raw_s = np.asarray(_r_int, dtype=float)[_r_order]
+                    _r_smooth_s = _moving_avg(_r_raw_s, _rempi_ma_win)
+
+                    _rempi_out_df = pd.DataFrame({
+                        "wavelength_half_nm": _r_wl_s,
+                        "intensity_au": _r_raw_s,
+                        f"intensity_ma{_rempi_ma_win}": _r_smooth_s,
+                    })
+                    _rempi_fname = f"REMPI_action_mz{_safe_mz}_tol{_r_tol:g}.csv"
+                    _rempi_out_df.to_csv(_assign_dir / _rempi_fname, index=False)
+                    _saved_files.append(_rempi_fname)
+
+                    # Store for the combined A4 page
+                    _rempi_panel = {
+                        "wl": _r_wl_s, "raw": _r_raw_s,
+                        "smooth": _r_smooth_s, "win": _rempi_ma_win,
+                    }
+
+                    # REMPI PNG (raw faint + moving-average smoothed)
+                    _fig_rp, _ax_rp = plt.subplots(figsize=(10, 4))
+                    if _rempi_ma_win > 1:
+                        _ax_rp.plot(_r_wl_s, _r_raw_s, color="#c9c9c9", lw=1,
+                                    label="Raw")
+                    _ax_rp.plot(_r_wl_s, _r_smooth_s, color="#7b2cbf", lw=2,
+                                label=(f"MA smoothed (w={_rempi_ma_win})"
+                                       if _rempi_ma_win > 1 else "REMPI"))
+                    _ax_rp.axhline(0, color="gray", ls="--", lw=1)
+                    _ax_rp.set_ylabel("Ion intensity (a.u.)", fontsize=11)
+                    _ax_rp.set_title(
+                        f"REMPI action spectrum — m/z {selected_mz:.1f} "
+                        f"(±{_r_tol:g} amu)", fontsize=12, fontweight="bold")
+                    _ax_rp.legend(fontsize=8, loc="upper right")
+                    _ax_rp.grid(True, alpha=0.3)
+                    _apply_wl_mpl(_ax_rp, fontsize=7)
+                    _fig_rp.tight_layout()
+                    _rempi_png = f"REMPI_action_mz{_safe_mz}_ma{_rempi_ma_win}.png"
+                    _fig_rp.savefig(_assign_dir / _rempi_png, dpi=300,
+                                    bbox_inches="tight")
+                    plt.close(_fig_rp)
+                    _saved_files.append(_rempi_png)
+                else:
+                    st.info(
+                        f"ℹ️ No REMPI mass bins within ±{_r_tol:g} amu of "
+                        f"{selected_mz:.1f} — REMPI action spectrum not saved."
+                    )
+            except Exception as _re_e:
+                st.warning(f"⚠️ Could not save REMPI action spectrum: {_re_e}")
+
+        # 6) + 7) Mass-spectrum PNG + CSV around the assigned mass, showing the
+        #         integration window(s) and pointing at the selected mass. The
+        #         view is zoomed enough to resolve neighbouring masses but wide
+        #         enough to place the peak in context.
+        try:
+            _x_ms_all = np.asarray(x_mass, dtype=float)
+            _y_ms_all = np.asarray(ms_y, dtype=float)
+            _ms_center = float(np.mean(iso_centers))
+            # Span covers all isotope centres + a ~±5 amu margin (min 10 amu wide).
+            _ms_span = max(10.0, (max(iso_centers) - min(iso_centers)) + 10.0)
+            _ms_zoom_lo = max(float(np.min(_x_ms_all)), _ms_center - _ms_span / 2.0)
+            _ms_zoom_hi = min(float(np.max(_x_ms_all)), _ms_center + _ms_span / 2.0)
+            _ms_zoom_mask = (_x_ms_all >= _ms_zoom_lo) & (_x_ms_all <= _ms_zoom_hi)
+            _win_mask = _build_iso_mask(iso_centers, half_width)
+
+            # ── PNG ───────────────────────────────────────────────────────────
+            _fig_ms_s, _ax_ms_s = plt.subplots(figsize=(10, 4))
+            _ax_ms_s.plot(_x_ms_all[_ms_zoom_mask], _y_ms_all[_ms_zoom_mask],
+                          color="#1f77b4", lw=1.2, label="Mass spectrum")
+            _y_zoom = _y_ms_all[_ms_zoom_mask]
+            _y_top = float(np.nanmax(_y_zoom)) if _y_zoom.size and np.isfinite(np.nanmax(_y_zoom)) else 1.0
+            for _c in iso_centers:
+                _ax_ms_s.axvspan(_c - half_width, _c + half_width,
+                                 color="#d62728", alpha=0.20)
+                _ax_ms_s.axvline(_c, color="#d62728", ls="--", lw=1)
+            # Arrow pointing at the primary selected mass
+            _y_at_sel = float(np.interp(selected_mz, _x_ms_all, _y_ms_all))
+            _ax_ms_s.annotate(
+                f"m/z {selected_mz:.2f}\n±{half_width:g} amu",
+                xy=(float(selected_mz), _y_at_sel),
+                xytext=(float(selected_mz), _y_top * 1.08 + 1e-9),
+                arrowprops=dict(arrowstyle="->", color="#d62728", lw=1.2),
+                ha="center", va="bottom", fontsize=9, color="#d62728",
+            )
+            _ax_ms_s.set_xlim(_ms_zoom_lo, _ms_zoom_hi)
+            _ax_ms_s.set_xlabel("m/z", fontsize=11)
+            _ax_ms_s.set_ylabel("Intensity (a.u.)", fontsize=11)
+            _ax_ms_s.set_title(
+                f"Mass spectrum — m/z {selected_mz:.1f} "
+                f"({_chosen_formula or '?'}, ±{half_width:g} amu window)",
+                fontsize=12, fontweight="bold",
+            )
+            _ax_ms_s.grid(True, alpha=0.3)
+            _fig_ms_s.tight_layout()
+            _ms_png = f"mass_spectrum_mz{_safe_mz}_hw{half_width:g}.png"
+            _fig_ms_s.savefig(_assign_dir / _ms_png, dpi=300, bbox_inches="tight")
+            plt.close(_fig_ms_s)
+            _saved_files.append(_ms_png)
+
+            # ── CSV (zoomed region; flags which bins are inside the window) ────
+            _ms_csv_df = pd.DataFrame({
+                "m/z": _x_ms_all[_ms_zoom_mask],
+                "intensity": _y_ms_all[_ms_zoom_mask],
+                "in_integration_window": _win_mask[_ms_zoom_mask],
+            })
+            _ms_csv = f"mass_spectrum_mz{_safe_mz}_hw{half_width:g}.csv"
+            _ms_csv_df.to_csv(_assign_dir / _ms_csv, index=False)
+            _saved_files.append(_ms_csv)
+
+            # Store for the combined A4 page
+            _ms_panel = {
+                "x": _x_ms_all[_ms_zoom_mask], "y": _y_zoom,
+                "lo": _ms_zoom_lo, "hi": _ms_zoom_hi,
+                "y_top": _y_top, "y_at_sel": _y_at_sel,
+            }
+        except Exception as _ms_e:
+            st.warning(f"⚠️ Could not save mass spectrum: {_ms_e}")
+
+        # 8) Combined vertical A4 page: structure + band-matched + REMPI + mass
+        if _save_a4:
+            try:
+                _a4_fig = plt.figure(figsize=(8.27, 11.69))  # A4 portrait (inches)
+                _gs = _a4_fig.add_gridspec(4, 1, height_ratios=[1.1, 1.2, 1.0, 1.0],
+                                           hspace=0.5)
+                _a4_fig.suptitle(
+                    f"m/z {selected_mz:.2f} — {_chosen_formula or '?'} ({_verdict})",
+                    fontsize=14, fontweight="bold", y=0.995,
+                )
+
+                def _a4_norm(_y):
+                    _a = np.asarray(_y, dtype=float)
+                    _f = _a[np.isfinite(_a)]
+                    if len(_f) == 0 or np.ptp(_f) == 0:
+                        return _a
+                    return (_a - np.nanmin(_f)) / np.ptp(_f)
+
+                # ── Panel 1: structure (single active, or grid of all) ───
+                _ax1 = _a4_fig.add_subplot(_gs[0])
+                _ax1.axis("off")
+                _struct_bytes = st.session_state.get("_mid_structure_img")
+                _export_mols_a4 = st.session_state.get("_mid_export_mols", [])
+                _drew_struct = False
+                from PIL import Image as _PILImage
+
+                # Grid mode: assemble every selected structure into one image.
+                if _a4_struct_grid and HAS_RDKIT and len(_export_mols_a4) >= 1:
+                    try:
+                        _g_mols = [v[2] for v in _export_mols_a4]
+                        _g_legends = [f"{v[1]} ({v[3]})" for v in _export_mols_a4]
+                        _ncols_a4 = min(len(_g_mols), 3)
+                        _grid_img = Draw.MolsToGridImage(
+                            _g_mols, molsPerRow=_ncols_a4,
+                            subImgSize=(320, 240), legends=_g_legends,
+                        )
+                        _buf_g = io.BytesIO()
+                        _grid_img.save(_buf_g, format="PNG")
+                        _ax1.imshow(_PILImage.open(io.BytesIO(_buf_g.getvalue())))
+                        _ax1.set_title(
+                            f"Structures ({len(_g_mols)})", fontsize=11,
+                            fontweight="bold")
+                        _drew_struct = True
+                    except Exception:
+                        _drew_struct = False
+
+                # Single-image mode (or grid fallback): show the active structure.
+                if not _drew_struct and _struct_bytes:
+                    try:
+                        _ax1.imshow(_PILImage.open(io.BytesIO(_struct_bytes)))
+                        _ax1.set_title("Structure", fontsize=11, fontweight="bold")
+                        _drew_struct = True
+                    except Exception:
+                        _drew_struct = False
+
+                if not _drew_struct:
+                    _ax1.set_title("Structure", fontsize=11, fontweight="bold")
+                    _ax1.text(0.5, 0.5, "No structure image", ha="center",
+                              va="center", fontsize=10, color="gray",
+                              transform=_ax1.transAxes)
+
+                # ── Panel 2: band-matched references ─────────────────────
+                _ax2 = _a4_fig.add_subplot(_gs[1])
+                _ax2.set_title("Band-matched references", fontsize=11,
+                               fontweight="bold")
+                _bmd = st.session_state.get("_mid_bm_data")
+                _bm_exp_wn = st.session_state.get("_mid_your_wn")
+                _bm_exp_int = st.session_state.get("_mid_your_intensity")
+                _drew_bm = False
+                if (_bmd is not None
+                        and abs(_bmd.get("mz", -1) - float(selected_mz)) < 1e-6
+                        and _bmd.get("matched")):
+                    _bm_matched = _bmd["matched"]
+                    _bm_sel_bands = _bmd.get("sel_bands", [])
+                    _bm_ridge = _bmd.get("ridge", True)
+                    _bm_xr = _bmd.get("xrange")
+                    _bm_pal = ["#1f77b4", "#ff7f0e", "#2ca02c", "#9467bd",
+                               "#8c564b", "#e377c2", "#bcbd22", "#17becf",
+                               "#d62728", "#7f7f7f"]
+                    for _b in _bm_sel_bands:
+                        _ax2.axvspan(_b["lo"], _b["hi"], color="green", alpha=0.10)
+                    if _bm_exp_wn is not None:
+                        _ax2.plot(_bm_exp_wn, _a4_norm(_bm_exp_int),
+                                  color="#d62728", lw=1.8, label="Experimental")
+                    for _mi, _s in enumerate(_bm_matched):
+                        _mwn = np.asarray(_s["wn"], dtype=float)
+                        _mit = np.asarray(_s["intensity"], dtype=float)
+                        if _bm_exp_wn is not None:
+                            _mm = ((_mwn >= float(np.nanmin(_bm_exp_wn)))
+                                   & (_mwn <= float(np.nanmax(_bm_exp_wn))))
+                            _mwn, _mit = _mwn[_mm], _mit[_mm]
+                        _off = (_mi + 1) * 1.0 if _bm_ridge else 0
+                        _ax2.plot(_mwn, _a4_norm(_mit) + _off,
+                                  color=_bm_pal[_mi % len(_bm_pal)], lw=1.2,
+                                  label=_s["name"][:30])
+                    if _bm_xr:
+                        _ax2.set_xlim(_bm_xr)
+                    _apply_wn_mpl(_ax2, spacing=50.0, fontsize=6)
+                    _ax2.set_ylabel("Intensity" + (" [stacked]" if _bm_ridge else ""),
+                                    fontsize=10)
+                    _ax2.legend(fontsize=6, loc="upper right", ncol=2)
+                    _ax2.grid(True, alpha=0.3)
+                    _drew_bm = True
+                if not _drew_bm:
+                    _ax2.text(0.5, 0.5, "No band-matched data", ha="center",
+                              va="center", fontsize=10, color="gray",
+                              transform=_ax2.transAxes)
+                    _ax2.axis("off")
+
+                # ── Panel 3: REMPI (moving-average smoothed) ─────────────
+                _ax3 = _a4_fig.add_subplot(_gs[2])
+                _ax3.set_title("REMPI action spectrum", fontsize=11,
+                               fontweight="bold")
+                if _rempi_panel is not None:
+                    if _rempi_panel["win"] > 1:
+                        _ax3.plot(_rempi_panel["wl"], _rempi_panel["raw"],
+                                  color="#c9c9c9", lw=1, label="Raw")
+                    _ax3.plot(_rempi_panel["wl"], _rempi_panel["smooth"],
+                              color="#7b2cbf", lw=2,
+                              label=(f"MA (w={_rempi_panel['win']})"
+                                     if _rempi_panel["win"] > 1 else "REMPI"))
+                    _ax3.axhline(0, color="gray", ls="--", lw=1)
+                    _ax3.set_ylabel("Ion intensity (a.u.)", fontsize=10)
+                    _ax3.legend(fontsize=7, loc="upper right")
+                    _ax3.grid(True, alpha=0.3)
+                    _apply_wl_mpl(_ax3, fontsize=6)
+                else:
+                    _ax3.text(0.5, 0.5, "No REMPI data", ha="center", va="center",
+                              fontsize=10, color="gray", transform=_ax3.transAxes)
+                    _ax3.axis("off")
+
+                # ── Panel 4: mass spectrum ───────────────────────────────
+                _ax4 = _a4_fig.add_subplot(_gs[3])
+                _ax4.set_title("Mass spectrum", fontsize=11, fontweight="bold")
+                if _ms_panel is not None:
+                    _ax4.plot(_ms_panel["x"], _ms_panel["y"], color="#1f77b4", lw=1.2)
+                    for _c in iso_centers:
+                        _ax4.axvspan(_c - half_width, _c + half_width,
+                                     color="#d62728", alpha=0.20)
+                        _ax4.axvline(_c, color="#d62728", ls="--", lw=1)
+                    _ax4.annotate(
+                        f"m/z {selected_mz:.2f}\n±{half_width:g} amu",
+                        xy=(float(selected_mz), _ms_panel["y_at_sel"]),
+                        xytext=(float(selected_mz), _ms_panel["y_top"] * 1.08 + 1e-9),
+                        arrowprops=dict(arrowstyle="->", color="#d62728", lw=1.2),
+                        ha="center", va="bottom", fontsize=8, color="#d62728",
+                    )
+                    _ax4.set_xlim(_ms_panel["lo"], _ms_panel["hi"])
+                    _ax4.set_xlabel("m/z", fontsize=10)
+                    _ax4.set_ylabel("Intensity (a.u.)", fontsize=10)
+                    _ax4.grid(True, alpha=0.3)
+                else:
+                    _ax4.text(0.5, 0.5, "No mass spectrum data", ha="center",
+                              va="center", fontsize=10, color="gray",
+                              transform=_ax4.transAxes)
+                    _ax4.axis("off")
+
+                _a4_pdf = f"summary_A4_mz{_safe_mz}.pdf"
+                _a4_png = f"summary_A4_mz{_safe_mz}.png"
+                _a4_fig.savefig(_assign_dir / _a4_pdf, bbox_inches="tight")
+                _a4_fig.savefig(_assign_dir / _a4_png, dpi=200, bbox_inches="tight")
+                plt.close(_a4_fig)
+                _saved_files.append(_a4_pdf)
+                _saved_files.append(_a4_png)
+            except Exception as _a4_e:
+                st.warning(f"⚠️ Could not save combined A4 page: {_a4_e}")
 
         st.success(
             f"✅ Saved m/z {selected_mz:.1f} → {_chosen_formula} ({_verdict})\n\n"

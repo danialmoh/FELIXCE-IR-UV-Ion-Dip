@@ -31,6 +31,7 @@ __all__ = [
     'parse_convoluted_spectrum',
     'parse_mlmd_ir',
     'parse_dft_file',
+    'parse_orca_vpt2_out',
 ]
 
 
@@ -476,6 +477,184 @@ def parse_orca_out_anharmonic(content):
     return np.array(all_freqs), np.array(all_intens), metadata
 
 
+def parse_orca_vpt2_out(content):
+    """
+    Parse ORCA VPT2+K .out file.
+
+    VPT2 output does not use the standard 'IR SPECTRUM' block. Instead it has
+    repeated 'IR Intensities' tables and a final 'Fundamental transitions [1/cm]'
+    table. This parser extracts:
+
+      * anharmonic fundamental frequencies from 'Fundamental transitions [1/cm]'
+      * corresponding IR intensities from the last 'IR Intensities' table
+      * overtones and combination bands from the final
+        'Overtones and combination bands' table
+
+    Returns merged stick spectrum with band_types metadata.
+    """
+    lines = content.splitlines()
+
+    def _read_table(start):
+        """
+        Yield the data rows of an ORCA table that begins just after ``start``.
+
+        ORCA brackets its column names with dashed separators, e.g.::
+
+            -------------------------------
+            Mode freq     Int          T2
+                 cm-1    km/mol        a.u.
+            -------------------------------
+            0   -1.58   -nan       -nan
+
+        so we cannot simply stop at the first dashed line. Instead we skip any
+        separator/units/column-name line and treat every line whose first token
+        is an integer as data. The table ends at the first blank line, or at a
+        dashed line once data has been seen.
+        """
+        rows = []
+        j = start
+        while j < len(lines):
+            stripped = lines[j].strip()
+            if not stripped:
+                if rows:
+                    break
+                j += 1
+                continue
+            if stripped.startswith('---') or stripped.startswith('==='):
+                if rows:
+                    break
+                j += 1
+                continue
+            if stripped.startswith('*'):
+                break
+            parts = stripped.split()
+            try:
+                int(parts[0])
+            except (ValueError, IndexError):
+                # Column-name or units line (e.g. 'Mode freq Int', 'cm-1 km/mol')
+                if rows:
+                    break
+                j += 1
+                continue
+            rows.append(parts)
+            j += 1
+        return rows, j
+
+    # ------------------------------------------------------------------
+    # 1. Collect intensities from every 'IR Intensities' block.
+    #    Later blocks overwrite earlier ones, so we end up with the last one.
+    # ------------------------------------------------------------------
+    intensities_by_mode = {}
+    i = 0
+    while i < len(lines):
+        if lines[i].strip() == 'IR Intensities':
+            rows, i = _read_table(i + 1)
+            for parts in rows:
+                if len(parts) >= 3:
+                    try:
+                        mode = int(parts[0])
+                        freq = float(parts[1])
+                        inten = float(parts[2])
+                        intensities_by_mode[mode] = (freq, inten)
+                    except (ValueError, IndexError):
+                        pass
+        else:
+            i += 1
+
+    # ------------------------------------------------------------------
+    # 2. Read anharmonic fundamental frequencies.
+    # ------------------------------------------------------------------
+    fund_freq_by_mode = {}
+    for i, line in enumerate(lines):
+        if 'Fundamental transitions [1/cm]' in line:
+            rows, _ = _read_table(i + 1)
+            for parts in rows:
+                if len(parts) >= 3:
+                    try:
+                        mode = int(parts[0])
+                        v_fund = float(parts[2])  # v(fund) column
+                        fund_freq_by_mode[mode] = v_fund
+                    except (ValueError, IndexError):
+                        pass
+            break
+
+    # ------------------------------------------------------------------
+    # 3. Read overtones and combination bands.
+    # ------------------------------------------------------------------
+    overtones_combinations = []
+    for i, line in enumerate(lines):
+        if 'Overtones and combination bands' in line:
+            rows, _ = _read_table(i + 1)
+            for parts in rows:
+                if len(parts) >= 5:
+                    try:
+                        m1 = int(parts[0])
+                        m2 = int(parts[1])
+                        freq = float(parts[2])
+                        inten = float(parts[4])  # km/mol column
+                        btype = 'overtone' if m1 == m2 else 'combination'
+                        overtones_combinations.append((freq, inten, btype))
+                    except (ValueError, IndexError):
+                        pass
+            break
+
+    # ------------------------------------------------------------------
+    # 4. Merge fundamentals. The IR tables index all 3N modes (the first
+    #    6 are translations/rotations), while the fundamental table indexes
+    #    only vibrations, so the usual offset is +6.
+    # ------------------------------------------------------------------
+    fundamentals = []
+    if fund_freq_by_mode:
+        min_ir = min(intensities_by_mode.keys()) if intensities_by_mode else 0
+        offset = 6 if min_ir == 0 and 6 in intensities_by_mode else 0
+        for mode, freq in sorted(fund_freq_by_mode.items()):
+            ir_idx = mode + offset
+            if ir_idx in intensities_by_mode:
+                _, inten = intensities_by_mode[ir_idx]
+            elif mode in intensities_by_mode:
+                _, inten = intensities_by_mode[mode]
+            else:
+                inten = 0.0
+            if freq > 0 and np.isfinite(inten) and inten >= 0:
+                fundamentals.append((freq, inten))
+    elif intensities_by_mode:
+        # Fallback: use the last IR Intensities block directly.
+        for _, (freq, inten) in sorted(intensities_by_mode.items()):
+            if freq > 0 and np.isfinite(inten) and inten >= 0:
+                fundamentals.append((freq, inten))
+
+    ot = [(f, i) for f, i, t in overtones_combinations if t == 'overtone']
+    cb = [(f, i) for f, i, t in overtones_combinations if t == 'combination']
+
+    all_freqs = (
+        [f for f, i in fundamentals]
+        + [f for f, i in ot]
+        + [f for f, i in cb]
+    )
+    all_intens = (
+        [i for f, i in fundamentals]
+        + [i for f, i in ot]
+        + [i for f, i in cb]
+    )
+    band_types = (
+        ['fundamental'] * len(fundamentals)
+        + ['overtone'] * len(ot)
+        + ['combination'] * len(cb)
+    )
+
+    metadata = {
+        'type': 'vpt2',
+        'software': 'ORCA',
+        'n_fundamentals': len(fundamentals),
+        'n_overtones': len(ot),
+        'n_combinations': len(cb),
+        'band_types': band_types,
+    }
+
+    return np.array(all_freqs), np.array(all_intens), metadata
+
+
+
 def parse_mlmd_ir(content):
     """
     Parse MLMD (Machine Learning Molecular Dynamics) IR spectrum text file.
@@ -621,8 +800,10 @@ def parse_dft_file(content, filename):
     if 'ANALYSIS REPORT' in header:
         return _tag(*parse_custom_report(content), 'Custom analysis report')
 
-    # ORCA output — decide harmonic vs NEARIR/anharmonic
+    # ORCA output — decide harmonic vs NEARIR/anharmonic vs VPT2
     if 'O   R   C   A' in header:
+        if 'Fundamental transitions [1/cm]' in content:
+            return _tag(*parse_orca_vpt2_out(content), 'ORCA VPT2 (.out)')
         if 'OVERTONES AND COMBINATION BANDS' in content:
             return _tag(*parse_orca_out_anharmonic(content), 'ORCA NEARIR/anharmonic (.out)')
         return _tag(*parse_orca_out(content), 'ORCA harmonic (.out)')

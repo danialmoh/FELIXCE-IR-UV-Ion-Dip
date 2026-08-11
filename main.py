@@ -108,6 +108,8 @@ with st.sidebar:
             st.switch_page(".streamlit/4.2_PeakDetection_NEW.py")
         if st.button("📋 4.3 Mass Reference", use_container_width=True, key="btn_mass"):
             st.switch_page(".streamlit/4.3_reference_spectrum.py")
+        if st.button("⚖️ 4.4 Quick Mass-Scan Comparison", use_container_width=True, key="btn_mass_compare"):
+            st.switch_page(".streamlit/4.4_MassScanCompare.py")
     
     # Section 5: Smoothing
     with st.container(border=True):
